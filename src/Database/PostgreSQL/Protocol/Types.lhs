@@ -36,6 +36,14 @@
 >   SessionMessage (..),
 >   SSLResponse (..),
 >   FrontendMessage (..),
+>   BackendMessage (..),
+>   -- * Frontend Authentication
+>   AuthenticationResponse (..),
+>   -- * Transaction Status Codes
+>   TransactionStatus,
+>    pattern TransactionIdle,
+>    pattern TransactionInProgress,
+>    pattern TransactionFailed,
 >   -- * Data Values
 >   Value,
 >   -- * Data Transmission Formats
@@ -49,6 +57,8 @@
 >   SessionObjectName,
 >   PortalName,
 >   StatementName,
+>   -- * Field Descriptions
+>   FieldDescription (..),
 >   -- * Notice Field Tags
 >   --
 >   -- | When issuing a notice or an error response, a backend may describe
@@ -90,10 +100,14 @@
 >    pattern NoticeLine,
 >    pattern NoticeRoutine,
 >   -- * Miscellaneous Types
+>   ChannelName,
+>   ColumnID,
+>   DataString,
+>   FieldName,
 >   ObjectID,
 >   ProcessID,
->   DataString,
 >   QueryString,
+>   ResultTag,
 >   SessionParameterName,
 > ) where
 
@@ -154,7 +168,6 @@
 >   deriving (Eq, Ord, Show)
 
 > -- | The type of a special-case response to an 'SSLRequest' message described above.
->
 > data SSLResponse =
 
 >   -- | Indicates to the frontend that the backend has accepted the 'SSLRequest'. The frontend
@@ -179,10 +192,9 @@
 >   deriving (Eq, Ord, Show)
 
 > -- | The type of messages sent by frontend to a PostgreSQL backend or server.
-> --   These are the messages tagged with @F@ in Chapter 49 of PostgreSQL documentation,
+> --   These are the messages tagged with ‘@F@’ in Chapter 49 of PostgreSQL documentation,
 > --   with exception of the @CancelRequest@, @StartupMessage@ and @SSLRequest@ message types
 > --   that are defined separately as 'SessionMessage' values.
->
 > data FrontendMessage =
 
 >   -- | A message of the form “@Bind p s pfs pvs rfs@” message requests /binding/ (i.e., creation)
@@ -293,6 +305,79 @@
 >   Terminate
 >   deriving (Eq, Ord, Show)
 
+> -- | The type of messages sent by backend to a PostgreSQL frontend or client.
+> --   These are the messages tagged with ‘@B@’ in Chapter 49 of PostgreSQL documentation.
+> data BackendMessage =
+
+>   -- | Sent by a backend in response to a 'StartupMessage' with details of any
+>   --   authentication requirements imposed on the frontend. In Chapter 49 of
+>   --   PostgreSQL manual, this is documented as an array of individual messages,
+>   --   but in the Haskell implementation we combine them into a single
+>   --   'AuthenticationResponse' constructor to simplify processing.
+>   AuthenticationResponse AuthenticationResponse |
+
+
+
+>   BackendKeyData            ProcessID               -- the process ID of this backend
+>                               Word32                  -- secret key to be used in query cancellation requests
+>   | BindComplete
+>   | CloseComplete
+>   | CommandComplete           ResultTag        -- result tag
+>   | CopyOutData               DataString              -- data stream
+>   | CopyOutDone
+>   | CopyInResponse            Format                  -- overall data format
+>                               (UArray16 Format)       -- formats of individual columns
+>   | CopyOutResponse           Format                  -- overall data format
+>                               (UArray16 Format)       -- formats of individual columns
+>   | CopyBothResponse          Format                  -- overall data format
+>                               (UArray16 Format)       -- formats of individual columns
+>   | DataRow                   (Array16 Value)         -- field value data
+>   | EmptyQueryResponse
+>   | ErrorResponse             [(NoticeFieldTag, ByteString)]            -- notification fields
+>   | FunctionCallResponse      Value                   -- function result value
+>   | NoData
+>   | NoticeResponse            [(NoticeFieldTag, ByteString)]            -- notification fields
+>   | NotificationResponse      ProcessID               -- the process ID of the notifying backend process
+>                               ChannelName             -- the name of the channel on which the notification has been raised
+>                               ByteString              -- the payload string passed from the notifying process
+>   | ParameterDescription      (UArray16 ObjectID)     -- list of object IDs of the parameters' data types
+>   | ParameterStatus           SessionParameterName    -- the name of the run-time parameter being reported
+>                               ByteString              -- the current value of the parameter
+>   | ParseComplete
+>   | PortalSuspended
+>   | ReadyForQuery             TransactionStatus       -- current backend transaction status
+>   | RowDescription            (Array16 FieldDescription) -- list of individual field descriptions
+>   deriving (Eq, Ord, Show)
+
+> data AuthenticationResponse =
+>     AuthenticationOk
+>   | AuthenticationKerberosV5
+>   | AuthenticationCleartextPassword
+>   | AuthenticationMD5Password !Word32
+>   | AuthenticationSCMCredential
+>   | AuthenticationGSS
+>   | AuthenticationSSPI
+>   | AuthenticationGSSContinue ByteString
+>   deriving (Eq, Ord, Show)
+
+
+  Transaction Status Codes
+  ========================
+
+> -- | Transaction status codes returned in 'ReadyForQuery' messages.
+> type TransactionStatus = Word8
+
+> -- | (‘@I@’) Transaction status code returned to indicate that the backend process is “idle”, i.e., outside of a transaction block.
+> pattern TransactionIdle = 0x49 :: TransactionStatus -- 'I'
+
+> -- | (‘@T@’) Transaction status code returned to indicate that the backend process is currently operating within a transaction block.
+> pattern TransactionInProgress = 0x54 :: TransactionStatus -- 'T'
+
+> -- | (‘@E@’) Transaction status code returned to indicate that the backend process is currently operating in a “transaction recovery” mode
+> --   after encoutering an error within a transaction block. All further SQL requests will be rejected until the block is completed with
+> --   an SQL @ROLLBACK@ command.
+> pattern TransactionFailed = 0x45 :: TransactionStatus -- 'E'
+
 
   Data Values
   ===========
@@ -347,6 +432,24 @@
 
 > -- | A 'SessionObjectName' used to identify a portal.
 > type PortalName = ByteString
+
+
+  Field Descriptions
+  ==================
+
+> -- | A data type used to describe a single result field in a 'RowDescription' message.
+> --   Each field description value has the form @FieldDescription /x/ /tid/ /
+> data FieldDescription = FieldDescription {
+>   fieldName               :: FieldName,   -- ^ The field's name.
+>   fieldTableID            :: !ObjectID,   -- ^ If the field can be identified as a column of a specific table, the object ID of the table;
+>                                           --   otherwise 'Database.PostgreSQL.Protocol.ObjectIDs.NULL'
+>   fieldColumnID           :: !ColumnID,   -- ^ If the field can be identified as a column of a specific table, the attribute number of the column; otherwise zero.
+>   fieldDataType           :: !ObjectID,   -- ^ The object ID of the field's data type.
+>   fieldDataTypeSize       :: !Int16,      -- ^ The data type size, negative for fields of a variable-width type.
+>   fieldDataTypeModifier   :: !Word32,     -- ^ The type modifier, with semantics defined individually for each data type.
+>   fieldFormat             :: !Format      -- ^ The format code used by the field; in a 'RowDescription' message returned from the statement variant of 'Describe',
+>                                           --   the format code is not yet known and will always be set to the default value of 'TextFormat'.
+> } deriving (Eq, Ord, Show)
 
 
   Notice Field Tags
@@ -437,179 +540,51 @@
   Miscellaneous Types
   ===================
 
-> -- | PostgreSQL objects are identified by 32-bit unsigned integers.
+> -- | Type used to identify asynchronous notification channels bound by SQL @LISTEN@ command.
+> type ChannelName = ByteString
+
+> -- | Type used to identify columns of a table by their numeric index, counting from @1@.
+> type ColumnID = Int16
+
+> -- | Raw encoded table data exchanged by 'CopyInData' and 'CopyOutData' messages.
+> type DataString = Lazy.ByteString
+
+> -- | Type used to identify result fields by their name.
+> type FieldName = ByteString
+
+> -- | Type used to identify PostgreSQL database objects.
 > type ObjectID = Word32
 
-> -- | PostgreSQL backend process IDs are identified by 32-bit unsigned integers.
+> -- | Type used to identify PostgreSQL backend processes.
 > type ProcessID = Word32
-
-> -- | raw encoded table data exchanged by 'CopyInData' and 'CopyOutData' messages.
-> type DataString = Lazy.ByteString
 
 > -- | Raw SQL query or command.
 > type QueryString = Lazy.ByteString
 
+> -- | Result tag of an SQL query returned in a 'CommandComplete' message.
+> --
+> --   This is usually a terse but human-readable string describing the nature
+> --   of the operation performed and the number of result rows affected:
+> --
+> --   * For single-row @INSERT@ commands into a table with row-level object identifiers (OIDs),
+> --     the tag has the form “@INSERT /oid/ 1@”, where @/oid/@ is the object ID of the inserted row.
+> --
+> --   * For all other @INSERT@ commands, the tag has the form “@INSERT 0 /n/@”, where @/n/@ is
+> --     the number of rows inserted by the query.
+> --
+> --   * For @DELETE@ commands, the tag has the form “@DELETE /n/@”, where @/n/@ is the number of rows deleted.
+> --
+> --   * For @UPDATE@ commands, the tag has the form “@UPDATE /n/@”, where @/n/@ is the number of rows updated.
+> --
+> --   * For @SELECT@ and @CREATE TABLE AS@ commands, the tag has the form “@SELECT /n/@”, where @/n/@ is the number of rows retrieved.
+> --
+> --   * For @MOVE@ commands, the tag has the form “@MOVE /n/@”, where @/n/@ is the number of rows by which the cursor's position has been changed.
+> --
+> --   * For @FETCH@ commands, the tag has the form “@FETCH /n/@”, where @/n/@ is the number of rows that have been retrieved from the cursor.
+> --
+> --   * For @COPY@ commands, the tag has the form “@COPY /n/@”, where @/n/@ is the number of rows copied,
+> --     or “@COPY@” (without the row count) in version of the PostgreSQL server prior to 8.2.
+> type ResultTag = ByteString
+
 > -- | Session parameters are identified by strict byte strings.
 > type SessionParameterName = ByteString
-
-
-
-
-
-> {-
-
-
-> -- | The decoded type of messages that may be sent by a frontend to a PostgreSQL backend or server.
-> --   These are the messages tagged with @F@ in Chapter 49 of PostgreSQL documentation, with the
-> --   following changes:
-> --
-> --   1. The special @CancelRequest@, @StartupMessage@ and @SSLRequest@ message types have been
-> --      omitted, since they can only appear as part of the initial handshake message of a client/server
-> --      connection. The wire encoding of these messages lacks the initial message type tag used to
-> --      differentiate between all other types, so that
-> --      them from being identever occurring in the middle of the message string.
-
-> --
-> --   1. The @Close@ and @Describe@ messages have been split into separate 'CloseStatement',
-> --      'ClosePortal', 'DescribeStatement' and 'DescribePortal' constructors for easier processing.
-> --
-> --   2. T
-
-
-> -- | The type of every possible message exchanged between the client and server.
-> --
-> --   The following data structure mostly follows the message formats and naming convention
-> --   described in Chapter 49 of PostgreSQL documentation (Frontend/Backend Protocol), with the
-> --   following exceptions:
-> --
-> --   1. All authentication response messages with the tag byte @\'R\'@ are returned as a single
-> --      message type 'AuthenticationResponse' to simplify implementation of the handshake protocol.
-> --   2. @Close@ and @Describe@ messages are split into separate 'CloseStatement', 'ClosePortal',
-> --      'DescribeStatement' and 'DescribePortal' constructors.
-> --   3. Additional 'ProtocolError' constructor has been added to represent various forms of
-> --      protocol violations, including unrecognized messages, messages with invalid content
-> --      incomplete messages, and plain old communication errors.
-> --
-> -- New constructors are likely to be added to this data type in the future.
-
-> -- Backend:   CKR23
-> -- Frontend:  BC
-> -- Startup:   CancelRequest, StartupMessage, SSLRequest
-
-> data Message =
-
->     -- | a
-
->     AuthenticationResponse    AuthenticationResponse  -- response details
->   | BackendKeyData            ProcessID               -- the process ID of this backend
->                               Word32                  -- secret key to be used in query cancellation requests
->   | Bind                      PortalName              -- name of the destination portal; `ByteString.null` to use the unnamed portal
->                               StatementName           -- name of the source prepared statement; `ByteString.null` to use the unnamed portal
->                               Formats                 -- parameter formats; an empty list requests default format for all parameters and
->                                                       -- singleton list specifies a single common format for all parameters; otherwise, the list must
->                                                       -- have the same length as the following parameter list
->                               Values                  -- parameter values
->                               Formats                 -- result formats; an empty list requests that any and all results should be returned
->                                                       -- in the default text format and a singleton list specifies a single common format for all results;
->                                                       -- otherwise, one format must be specified for each result column returned by the actual query
->   | BindComplete
->   | CancelRequest             ProcessID               -- the process ID of the target backend
->                               Word32                  -- secret key provided by the corresponding `BackendKeyData` message
->   | CloseStatement            StatementName           -- name of the statement to close; `ByteString.null` to close the unnamed statement
->   | ClosePortal               PortalName              -- name of the portal to close; `ByteString.null` to close the unnamed portal
->   | CloseComplete
->   | CommandComplete           ByteString              -- result tag
->   | CopyData                  Lazy.ByteString         -- data stream
->   | CopyDone
->   | CopyFail                  ByteString              -- error message describing the cause of failure
->   | CopyInResponse            Format                  -- overall data format
->                               Formats                 -- formats of individual columns
->   | CopyOutResponse           Format                  -- overall data format
->                               Formats                 -- formats of individual columns
->   | CopyBothResponse          Format                  -- overall data format
->                               Formats                 -- formats of individual columns
->   | DataRow                   Values                  -- field value data
->   | DescribeStatement         StatementName           -- name of the statement to describe; `ByteString.null` to describe the unnamed statement
->   | DescribePortal            PortalName              -- name of the portal to describe; `ByteString.null` to describe the unnamed portal
->   | EmptyQueryResponse
->   | ErrorResponse             NoticeFields            -- notification fields
->   | Execute                   PortalName              -- name of portal to execute; `ByteString.null` to use the unnamed portal
->                               Int32                   -- maximum number of rows to return; zero denotes "no limit"
->   | Flush
->   | FunctionCall              ObjectID                -- object ID of the function to call
->                               Formats                 -- argument formats; an empty list requests default format for all arguments and
->                                                       -- singleton list specifies a single common format for all arguments; otherwise, the list must
->                                                       -- have the same length as the following argument list
->                               Values                  -- argument values
->                               Format                  -- format of the function's result
->   | FunctionCallResponse      Value                   -- function result value
->   | NoData
->   | NoticeResponse            NoticeFields            -- notification fields
->   | NotificationResponse      ProcessID               -- the process ID of the notifying backend process
->                               ChannelName             -- the name of the channel on which the notification has been raised
->                               ByteString              -- the payload string passed from the notifying process
->   | ParameterDescription      TypeIDs                 -- list of object IDs of the parameters' data types
->   | ParameterStatus           ParameterName           -- the name of the run-time parameter being reported
->                               ByteString              -- the current value of the parameter
->   | Parse                     StatementName           -- the name of the destination prepared statement; `ByteString.null` to use the unnamed statement
->                               ByteString              -- the query string to parse
->                               TypeIDs                 -- list of object IDs of the types of the query's parameters;
->                                                       -- can be set to 0 to leave the type of a parameter unspecified
->   | ParseComplete
->   | PasswordMessage           ByteString              -- the password, encrypted if required
->   | PortalSuspended
->   | Query                     ByteString              -- the query string to execute
->   | ReadyForQuery             TransactionStatus       -- current backend transaction status
->   | RowDescription            FieldDescriptions       -- list of individual field descriptions
->   | SSLRequest
->   | StartupMessage            Parameters              -- connection parameters
->   | Sync
->   | Terminate
-
-> data AuthenticationResponse =
->     AuthenticationOk
->   | AuthenticationKerberosV5
->   | AuthenticationCleartextPassword
->   | AuthenticationMD5Password !Word32
->   | AuthenticationSCMCredential
->   | AuthenticationGSS
->   | AuthenticationSSPI
->   | AuthenticationGSSContinue ByteString
-
-> data FieldDescription =
->   FieldDescription
->     FieldName     -- the field name
->     !ObjectID     -- if the field can be identified as a column of a specific table, the object ID of the table; otherwise zero
->     !ColumnID     -- if the field can be identified as a column of a specific table, the attribute number of the column; otherwise zero
->     !TypeID       -- the object ID of the field's data type
->     !Int16        -- the data type size; negative values denote variable-width types
->     !Word32       -- the type modifier; the meaning is type-specific
->     !Format       -- the format code; always set to `Text` in `RowDescription` messages
-> data TransactionStatus = TransactionIdle | TransactionInProgress | TransactionFailed deriving (Eq, Ord, Show)
-
-> type ObjectID             = Word32
-> type TypeID               = ObjectID
-> type ProcessID            = Word32
-> type ColumnID             = Word16
-
-> type ChannelName          = ByteString
-> type FieldName            = ByteString
-> type ParameterName        = ByteString
-> type PortalName           = ByteString
-> type StatementName        = ByteString
-
-> type Value                = Maybe ByteString
-
-> type NoticeField          = (NoticeTag, ByteString)
-> type NoticeTag            = Char
-
-> type Parameter            = (ParameterName, ByteString)
-
-> type Formats              = [Format]
-> type TypeIDs              = [TypeID]
-> type Values               = [Value]
-> type NoticeFields         = [NoticeField]
-> type Parameters           = [Parameter]
-> type FieldDescriptions    = [FieldDescription]
-
-> -}
