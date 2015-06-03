@@ -21,7 +21,7 @@
 > {-# LANGUAGE PatternSynonyms, ScopedTypeVariables #-}
 
 > module Database.PostgreSQL.Protocol.Types (
->   -- * Array field types
+>   -- * Array Fields
 >   --
 >   -- | For compactness, we depict those as Haskell arrays (unboxed when possible) with
 >   --   a 16-bit index type. PostgreSQL documentation is not clear on whether array sizes
@@ -125,8 +125,8 @@
 > import qualified Data.ByteString.Lazy as Lazy
 
 
-  Array field types
-  =================
+  Array Fields
+  ============
 
 > -- | Type used to represent arrays of unboxed (numeric) values in PostgreSQL messages.
 > type UArray16 a = UArray Int16 a
@@ -762,20 +762,13 @@
 > --
 > --   * For single-row @INSERT@ commands into a table with row-level object identifiers (OIDs),
 > --     the tag has the form “@INSERT /oid/ 1@”, where @/oid/@ is the object ID of the inserted row.
-> --
 > --   * For all other @INSERT@ commands, the tag has the form “@INSERT 0 /n/@”, where @/n/@ is
 > --     the number of rows inserted by the query.
-> --
 > --   * For @DELETE@ commands, the tag has the form “@DELETE /n/@”, where @/n/@ is the number of rows deleted.
-> --
 > --   * For @UPDATE@ commands, the tag has the form “@UPDATE /n/@”, where @/n/@ is the number of rows updated.
-> --
 > --   * For @SELECT@ and @CREATE TABLE AS@ commands, the tag has the form “@SELECT /n/@”, where @/n/@ is the number of rows retrieved.
-> --
 > --   * For @MOVE@ commands, the tag has the form “@MOVE /n/@”, where @/n/@ is the number of rows by which the cursor's position has been changed.
-> --
 > --   * For @FETCH@ commands, the tag has the form “@FETCH /n/@”, where @/n/@ is the number of rows that have been retrieved from the cursor.
-> --
 > --   * For @COPY@ commands, the tag has the form “@COPY /n/@”, where @/n/@ is the number of rows copied,
 > --     or “@COPY@” (without the row count) in version of the PostgreSQL server prior to 8.2.
 > type ResultTag = ByteString
