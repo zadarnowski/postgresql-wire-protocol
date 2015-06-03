@@ -50,6 +50,9 @@
 >   Format,
 >    pattern TextFormat,
 >    pattern BinaryFormat,
+>   StreamFormat,
+>    pattern TextStreamFormat,
+>    pattern BinaryStreamFormat,
 >   -- * Session Objects
 >   SessionObjectKind,
 >    pattern StatementObject,
@@ -59,7 +62,7 @@
 >   StatementName,
 >   -- * Field Descriptions
 >   FieldDescription (..),
->   -- * Notice Field Tags
+>   -- * Notice Fields
 >   --
 >   -- | When issuing a notice or an error response, a backend may describe
 >   --   various aspects of the underlying condition through a series of
@@ -81,6 +84,8 @@
 >   --   of any of these fields guarantees the presence of another field. Core error sources observe the interrelationships
 >   --   noted below, but user-defined functions may use these fields in other ways. In the same vein, frontends should not
 >   --   assume that these fields denote contemporary objects in the current database.
+>   NoticeFields,
+>   NoticeField,
 >   NoticeFieldTag,
 >    pattern NoticeSeverity,
 >    pattern NoticeCode,
@@ -160,7 +165,7 @@
 >   --   the frontend must include in the message the unique 32-bit key @secret@ generated
 >   --   by the backend process and supplied to the frontend in a 'BackendKeyData' message
 >   --   sent as part of the session establishment protocol of the targeted communication session.
->   CancelRequest ProcessID Word32 |
+>   CancelRequest !ProcessID !Word32 |
 
 >   -- | Requests establishment of an SSL-protected communication session.
 >   --   The server should respond with an 'SSLResponse' message described below.
@@ -188,7 +193,7 @@
 >   --   case the connection must be closed, but the frontend might choose to open another, fresh
 >   --   connection and proceed without requesting SSL. The notice returned by the backend is
 >   --   unlikely to continue meaningful error information and should most likely be ignored.
->   SSLRequestFailed [(NoticeFieldTag, ByteString)]
+>   SSLRequestFailed NoticeFields
 >   deriving (Eq, Ord, Show)
 
 > -- | The type of messages sent by frontend to a PostgreSQL backend or server.
@@ -259,7 +264,7 @@
 >   --   should be returned by the backend; otherwise, the @n@ parameter is ignored and all data
 >   --   rows should be returned. If @x@ returns a row set and @n@ is negative, the results are
 >   --   left unspecified by the protocol.
->   Execute PortalName Int32 |
+>   Execute PortalName !Int32 |
 
 >   -- | Indicates that the backend should immediately return any pending command result data.
 >   Flush |
@@ -272,7 +277,7 @@
 >   --   values are supplied in the default text format, a singleton array to specify the
 >   --   same explicit transfer format for all arguments, or else it must specify precisely
 >   --   one format for each of the argument values in @avs@.
->   FunctionCall ObjectID (UArray16 Format) (Array16 Value) Format |
+>   FunctionCall !ObjectID (UArray16 Format) (Array16 Value) !Format |
 
 >   -- | A message of the form “@Parse x q pts@” requests creation of a new prepared statement
 >   --   object with the name @x@ in the current session from the SQL command @q@.
@@ -316,48 +321,212 @@
 >   --   'AuthenticationResponse' constructor to simplify processing.
 >   AuthenticationResponse AuthenticationResponse |
 
+>   -- | A message of the form “@BackendKeyData pid k@” is sent by the backend
+>   --   as part of the session establishment protocol, providing the frontend
+>   --   process with the backend process ID @pid@ and secret @k@ required of
+>   --   the frontend to issue query cancellation requests (see: 'CancelQuery'
+>   --   message type above.)
+>   BackendKeyData !ProcessID !Word32 |
 
+>   -- | Sent by the backend to indicate successful completion of a 'Bind' request.
+>   BindComplete |
 
->   BackendKeyData            ProcessID               -- the process ID of this backend
->                               Word32                  -- secret key to be used in query cancellation requests
->   | BindComplete
->   | CloseComplete
->   | CommandComplete           ResultTag        -- result tag
->   | CopyOutData               DataString              -- data stream
->   | CopyOutDone
->   | CopyInResponse            Format                  -- overall data format
->                               (UArray16 Format)       -- formats of individual columns
->   | CopyOutResponse           Format                  -- overall data format
->                               (UArray16 Format)       -- formats of individual columns
->   | CopyBothResponse          Format                  -- overall data format
->                               (UArray16 Format)       -- formats of individual columns
->   | DataRow                   (Array16 Value)         -- field value data
->   | EmptyQueryResponse
->   | ErrorResponse             [(NoticeFieldTag, ByteString)]            -- notification fields
->   | FunctionCallResponse      Value                   -- function result value
->   | NoData
->   | NoticeResponse            [(NoticeFieldTag, ByteString)]            -- notification fields
->   | NotificationResponse      ProcessID               -- the process ID of the notifying backend process
->                               ChannelName             -- the name of the channel on which the notification has been raised
->                               ByteString              -- the payload string passed from the notifying process
->   | ParameterDescription      (UArray16 ObjectID)     -- list of object IDs of the parameters' data types
->   | ParameterStatus           SessionParameterName    -- the name of the run-time parameter being reported
->                               ByteString              -- the current value of the parameter
->   | ParseComplete
->   | PortalSuspended
->   | ReadyForQuery             TransactionStatus       -- current backend transaction status
->   | RowDescription            (Array16 FieldDescription) -- list of individual field descriptions
+>   -- | Sent by the backend to indicate successful completion of a 'Close' request.
+>   CloseComplete |
+
+>   -- | Sent by the backend to indicate successful completion of a 'Query' or 'Execute'
+>   --   request, after any query results have been returned through an appropriate
+>   --   number of 'DataRow' messages.
+>   CommandComplete ResultTag |
+
+>   -- | Transmits a chunk of a @COPY@ data string from the backend to the frontend.
+>   --   The actual format of the stream data is determined by the user as part of the
+>   --   requesting @COPY@ command and communicated by the backend back to the frontend
+>   --   in the 'CopyInResponse', 'CopyOutResponse' or 'CopyBothResponse' message that
+>   --   heralds commencement of the @COPY@ subprotocol session.
+>   --
+>   --   By convention, backends are expected to send complete data rows in a 'CopyOutData'
+>   --   message, but frontends are allowed to divide stream data into chunks arbitriarly
+>   --   without regard of data row boundaries.
+>   CopyOutData DataString |
+
+>   -- | Sent after the final 'CopyOutData' message of a given @COPY@ subprotocol session,
+>   --   indicates successful completion of an entire @COPY@ data stream.
+>   CopyOutDone |
+
+>   -- | A message of the form “@CopyInResponse f fs@” is sent by the backend to initiate
+>   --   an inbound @COPY@ subprotocol session with the frontend. The frontend should
+>   --   respond with zero or more 'CopyInData' messages followed by a 'CopyInDone',
+>   --   or, if it is not prepared to do so, send a 'CopyFail' message back to the server.
+>   --
+>   --   The /stream format/ parameter @f@ defines the overall format of the data stream
+>   --   requested by the backend, while the array @fs@ defines the transfer formats of
+>   --   the individual data fields in each row, and must always be set to 'TextFormat'
+>   --   if the overal format of the stream @f@ is set to 'TextStreamFormat'.
+>   CopyInResponse StreamFormat (UArray16 Format) |
+
+>   -- | A message of the form “@CopyOutResponse f fs@” is sent by the backend to initiate
+>   --   an outbound @COPY@ subprotocol session with the frontend. It should be followed
+>   --   immediately by zero or more 'CopyOutData' messages and completed with 'CopyOutDone'.
+>   --
+>   --   The /stream format/ parameter @f@ defines the overall format of the data stream
+>   --   requested by the backend, while the array @fs@ defines the transfer formats of
+>   --   the individual data fields in each row, and must always be set to 'TextFormat'
+>   --   if the overal format of the stream @f@ is set to 'TextStreamFormat'.
+>   CopyOutResponse StreamFormat (UArray16 Format) |
+
+>   -- | A message of the form “@CopyOutResponse f fs@” is sent by the backend to initiate
+>   --   a bidirectional @COPY@ subprotocol session, used only for streaming replication.
+>   --
+>   --   The /stream format/ parameter @f@ defines the overall format of the data stream
+>   --   requested by the backend, while the array @fs@ defines the transfer formats of
+>   --   the individual data fields in each row, and must always be set to 'TextFormat'
+>   --   if the overal format of the stream @f@ is set to 'TextStreamFormat'.
+>   CopyBothResponse StreamFormat (UArray16 Format) |
+
+>   -- | Sent by the backend with a list of column or field values returned from a data set
+>   --   returning SQL query such as @SELECT@ or @FETCH@.
+>   DataRow (Array16 Value) |
+
+>   -- | Sent by the backend in lieu of the 'CommandComplete' message as a response to
+>   --   an attempt to execute an empty query string.
+>   EmptyQueryResponse |
+
+>   -- | Sent by the backend to indicate an error condition, with details of the error
+>   --   communicated through a list of tagged /notice fields/ as described in the
+>   --   definition of the 'NoticeFieldTag'.
+>   ErrorResponse NoticeFields |
+
+>   -- | Sent by the backend to indicate successful completion of a 'FunctionCall'
+>   --   operation, with the sole value returned by the function call (possibly @NULL@.)
+>   FunctionCallResponse Value |
+
+>   -- | Sent by the backend in lieu of the 'RowDescription' message, in response
+>   --   to a 'Describe' message for a statement or portal which represents an SQL
+>   --   command such as @CREATE@ or @INSERT@ that does not return a row set.
+>   NoData |
+
+>   -- | Sent by the backend to inform the frontend of a condition such as a warning
+>   --   or administrator action that may, or may be relevant to an operation currently
+>   --   in progress and may be issued asynchronously to any other message exchanges.
+>   --   Frontends must be prepared to accept such messages from the backend at any
+>   --   time after the initial 'StartupMessage' of a communication session.
+>   NoticeResponse NoticeFields |
+
+>   -- | A message of the form “@NotificationResponse pid c x@” is sent by the backend
+>   --   to inform the frontend of a @NOTIFY@ event issued by the backend process @pid@,
+>   --   on the channel @c@ with a payload @x@. Frontends must be prepared to accept
+>   --   such messages from the backend at any time after the initial 'StartupMessage'
+>   --   of a communication session, irrespective of any other message exchanges being
+>   --   conducted.
+>   NotificationResponse !ProcessID ChannelName ByteString |
+
+>   -- | Sent by the backend in response to a statement variant of a 'Describe' message,
+>   --   with object IDs of the types of all parameters required by the statement.
+>   ParameterDescription (UArray16 ObjectID) |
+
+>   -- | A message of the form “@ParameterStatus p x@” is sent by the backend whenever
+>   --   of the “significant” session parameters is changed, either explicitly by the
+>   --   user with the SQL @SET@ comand, or as a result of administrator action.
+>   --   Frontends must be prepared to accept such messages from the backend at any
+>   --   time after the initial 'StartupMessage' of a communication session,
+>   --   irrespective of any other message exchanges being conducted.
+>   --
+>   --   What constitutes a “significant” message is currently left unspecified in
+>   --   PostgreSQL documentation, and may even become configurable in future server
+>   --   versions. At present time, these messages are issued for changes of the
+>   --   following parametes: @server_version@, @server_encoding@, @client_encoding@,
+>   --   @application_name@, @is_superuser@, @session_authorization@, @DateStyle@,
+>   --   @IntervalStyle@, @TimeZone@, @integer_datetimes@ and @standard_conforming_strings@.
+>   ParameterStatus SessionParameterName ByteString |
+
+>   -- | Sent by the backend in response to a successful completion of a 'Parse' operation.
+>   ParseComplete |
+
+>   -- | Sent by the backend after the maximum number of 'DataRow' messages requested by
+>   --   an 'Execute' operation has been reached without exhausting the entire result set.
+>   PortalSuspended |
+
+>   -- | Sent by the backend as a synchronization point, indicating readiness to process
+>   --   a new SQL command, carrying with it the status of the current transaction (if any.)
+>   ReadyForQuery !TransactionStatus |
+
+>   -- | Sent by the backend at the beginning of a result set as part of a simple or extended
+>   --   query protocol, or in response to a 'Describe' message referring to an SQL command
+>   --   that returns a row set.
+>   RowDescription (Array16 FieldDescription)
 >   deriving (Eq, Ord, Show)
 
+
+> -- | Details of a backend response to a frontend's authentication request
+> --   depicted by a session's 'StartupMessage'.
 > data AuthenticationResponse =
->     AuthenticationOk
->   | AuthenticationKerberosV5
->   | AuthenticationCleartextPassword
->   | AuthenticationMD5Password !Word32
->   | AuthenticationSCMCredential
->   | AuthenticationGSS
->   | AuthenticationSSPI
->   | AuthenticationGSSContinue ByteString
+
+>   -- | Issued by the backend to signify successful authentication of the frontend's credentials.
+>   AuthenticationOk |
+
+>   -- | Issued by the backend to initiate Kerberos V5 authentication dialogue,
+>   --   described separately in Kerberos specification. This authentication method
+>   --   is no longer supported by recent versions of PostgreSQL software.
+>   AuthenticationKerberosV5 |
+
+>   -- | Issued by the backend to request clear-text password authentication.
+>   --   The frontend should respond with a 'PasswordMessage' containing an unencrypted
+>   --   text of the user's password.
+>   AuthenticationCleartextPassword |
+
+>   -- | A message of the form “@AuthenticationMD5Password s@” is issued by the backend
+>   --   to request MD5-based password authentication with the specified 32-bit /salt/ @s@.
+>   --   The frontend should respond with a 'PasswordMessage x', in which @x@ is a byte string
+>   --   derived from the user's login name @u@, password @p@ and the supplied salt @ss@ as follows:
+>   --
+>   -- @
+>   --      "md5" <> md5 (md5 (/p/ <> /u/) <> /ss/
+>   -- @
+>   --
+>   --   where /s/ is a 4-byte byte string obtained from the big-endian encoding of the supplied
+>   --   salt @s@, and @md5(x)@ is a function that returns a 32-byte bytestring obtained from the
+>   --   lowercase hexadecimal encoding of the MD5 signature of @x@.
+>   AuthenticationMD5Password !Word32 |
+
+>   -- | Issued by the backend to request SCM credential authentication, possible only on
+>   --   connections over local Unix-domain sockets on platforms that support SCM credential
+>   --   messages. The frontend must issue an SCM credential message and then send a single
+>   --   data byte. The contents of the data byte are uninteresting; it's only used to ensure
+>   --   that the server waits long enough to receive the credential message. If the credential
+>   --   is acceptable, the server responds with an 'AuthenticationOk', otherwise it responds
+>   --   with an 'ErrorResponse'. This message type is only issued by versions of PostgreSQL
+>   --   servers earlier than 9.1 and may eventually be removed from the protocol specification.
+>   AuthenticationSCMCredential |
+
+>   -- | Issued by the backend to request GSS credential authentication. The frontend should respond
+>   --   by initiating a GSSAPI negotiation, sending a 'PasswordMessage' with the first part of the
+>   --   GSSAPI data stream. If further messages are needed, the server will respond with an
+>   --   'AuthenticationGSSContinue' message.
+>   AuthenticationGSS |
+
+>   -- | Issued by the backend to request SSPI credential authentication. The frontend should respond
+>   --   by initiating a SSPI negotiation, sending a 'PasswordMessage' with the first part of the
+>   --   SSPI data stream. If further messages are needed, the server will respond with an
+>   --   'AuthenticationGSSContinue' message.
+>   AuthenticationSSPI |
+
+>   -- | Issued by the backend as a response to the previous step of GSSAPI or SSPI negotiation,
+>   --   i.e., an 'AuthenticationGSS', 'AuthenticationSSPI' or an earlier 'AuthenticationGSSContinue'
+>   --   message. If the GSSAPI or SSPI data in this message indicates more data is needed to complete
+>   --   the authentication, the frontend must send that data as another 'PasswordMessage'.
+>   --   If GSSAPI or SSPI authentication is completed by this message, the server will eventually
+>   --   send 'AuthenticationOk' to indicate successful authentication or 'ErrorResponse' to indicate
+>   --   failure.
+>   AuthenticationGSSContinue DataString |
+
+>   -- | A message of the form “@AuthenticationUnsupported t x@” is used to encode possible future
+>   --   authentication methods that are not recognized by the current version of the library.
+>   --   The 32-bit tag @t@ describes the authentication method requested and @x@ described any
+>   --   authentication parameters (possibly 'Data.ByteString.Lazy.null'), in the method-specific
+>   --   format. The only sensible response to this message is to abandon the conection after
+>   --   issuing an appropriate notification message to the user.
+>   AuthenticationUnsupported Word32 DataString
 >   deriving (Eq, Ord, Show)
 
 
@@ -392,8 +561,9 @@
   =========================
 
 > -- | Haskell type used to describe encoding formats of query parameters and result
-> --   data values. At the moment, PostgreSQL defines two: the default text format @0@
-> --   and the somewhat poorly-documented binary format @1@.
+> --   data values. At the moment, PostgreSQL defines two: the default text format
+> --   'TextFormat' (@0@) and the somewhat poorly-documented binary format
+> --   'BinaryFormat (@1@).
 > type Format = Word16
 
 > -- | (@0@) Data exchanged in the default SQL text format similar to that defined by
@@ -407,6 +577,20 @@
 > --   format could result in loss of precision. Details of the known binary
 > --   formats are described separately in "Database.PostgreSQL.Protocol.Binary".
 > pattern BinaryFormat = 1 :: Format
+
+> -- | Haskell type used to describe encoding format of data streams exchanged using
+> --   the @COPY@ subprotocol. At the moment, PostgreSQL defines two: the default
+> --   'TextStreamFormat' (@0@) and a more compact 'BinaryStreamFormat' (@1@).
+> type StreamFormat = Word8
+
+> -- | (@0@) Data streamed in the default text format, in which rows are separated
+> --   by newlines and columns are separated by the delimiter character configured
+> --   as part of the @COPY@ command.
+> pattern TextStreamFormat = 0 :: StreamFormat
+
+> -- | (@1@) Data streamed in a compact binary format described in the PostgreSQL
+> --   documentation of the @COPY@ command.
+> pattern BinaryStreamFormat = 1 :: StreamFormat
 
 
   Session Objects
@@ -452,8 +636,18 @@
 > } deriving (Eq, Ord, Show)
 
 
-  Notice Field Tags
-  =================
+  Notice Fields
+  =============
+
+> -- | A type used to depict a list of notice fields, collectively describing
+> --   all known aspects of an error condition or notice message.
+> type NoticeFields = [NoticeField]
+
+> -- | A type used to depict a single notice field as a pair @(t, x)@,
+> --   describing one particular aspect of an error condition or notice message,
+> --   as identified by the /tag/ @t@. The precise semantics of the associated
+> --   field value @x@ are described individually below for each known tag byte.
+> type NoticeField = (NoticeFieldTag, ByteString)
 
 > -- | Tags describing semantics of individual fields within a notice or error response.
 > type NoticeFieldTag = Word8
