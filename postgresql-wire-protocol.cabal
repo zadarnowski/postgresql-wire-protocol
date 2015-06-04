@@ -42,6 +42,7 @@ library
   ghc-options:      -Wall -Werror -fno-warn-unused-do-bind -fno-warn-unused-binds
 
   exposed-modules:
+    Database.PostgreSQL.Protocol.Builders
     Database.PostgreSQL.Protocol.ObjectIDs
     Database.PostgreSQL.Protocol.Types
 

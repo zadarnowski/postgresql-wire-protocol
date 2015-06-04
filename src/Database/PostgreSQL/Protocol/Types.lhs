@@ -252,17 +252,17 @@
 >   --   provide a human-readable description of the exact error condition behind the failure.
 >   CopyFail ByteString |
 
->   -- | A message of the form “@Close k x@” requests that the backend provide details about
+>   -- | A message of the form “@Describe k x@” requests that the backend provide details about
 >   --   the session object @x@ of type @k@ (either a 'StatementObject' created by the 'Parse'
 >   --   message or a 'PortalObject' created with 'Bind'.) The backend should respond with
 >   --   a 'ParameterDescription' or 'RowDescription' message for statement and portal objects,
 >   --   respectively.
 >   Describe SessionObjectKind SessionObjectName |
 
->   -- | A message of the form “@Execute x n@” requests execution of a bound portal @x@.
->   --   If @n@ is greater than zero and @x@ represents an SQL query, at most @n@ data rows
+>   -- | A message of the form “@Execute p n@” requests execution of a bound portal @p@.
+>   --   If @n@ is greater than zero and @p@ represents an SQL query, at most @n@ data rows
 >   --   should be returned by the backend; otherwise, the @n@ parameter is ignored and all data
->   --   rows should be returned. If @x@ returns a row set and @n@ is negative, the results are
+>   --   rows should be returned. If @p@ returns a row set and @n@ is negative, the results are
 >   --   left unspecified by the protocol.
 >   Execute PortalName !Int32 |
 
@@ -279,8 +279,8 @@
 >   --   one format for each of the argument values in @avs@.
 >   FunctionCall !ObjectID (UArray16 Format) (Array16 Value) !Format |
 
->   -- | A message of the form “@Parse x q pts@” requests creation of a new prepared statement
->   --   object with the name @x@ in the current session from the SQL command @q@.
+>   -- | A message of the form “@Parse s q pts@” requests creation of a new prepared statement
+>   --   object with the name @s@ in the current session from the SQL command @q@.
 >   --   The statement name can be set to 'ByteString.null' to create the default unnamed
 >   --   statement. The array @pts@ specifies object IDs of PostgreSQL types for any query
 >   --   parameters appearing in @q@. It is not required to specify types for all query
@@ -520,13 +520,13 @@
 >   --   failure.
 >   AuthenticationGSSContinue DataString |
 
->   -- | A message of the form “@AuthenticationUnsupported t x@” is used to encode possible future
+>   -- | A message of the form “@AuthenticationMiscellaneous t x@” is used to encode possible future
 >   --   authentication methods that are not recognized by the current version of the library.
 >   --   The 32-bit tag @t@ describes the authentication method requested and @x@ described any
 >   --   authentication parameters (possibly 'Data.ByteString.Lazy.null'), in the method-specific
 >   --   format. The only sensible response to this message is to abandon the conection after
 >   --   issuing an appropriate notification message to the user.
->   AuthenticationUnsupported Word32 DataString
+>   AuthenticationMiscellaneous Word32 DataString
 >   deriving (Eq, Ord, Show)
 
 
@@ -628,7 +628,7 @@
 >   fieldTableID            :: !ObjectID,   -- ^ If the field can be identified as a column of a specific table, the object ID of the table;
 >                                           --   otherwise 'Database.PostgreSQL.Protocol.ObjectIDs.NULL'
 >   fieldColumnID           :: !ColumnID,   -- ^ If the field can be identified as a column of a specific table, the attribute number of the column; otherwise zero.
->   fieldDataType           :: !ObjectID,   -- ^ The object ID of the field's data type.
+>   fieldDataTypeID         :: !ObjectID,   -- ^ The object ID of the field's data type.
 >   fieldDataTypeSize       :: !Int16,      -- ^ The data type size, negative for fields of a variable-width type.
 >   fieldDataTypeModifier   :: !Word32,     -- ^ The type modifier, with semantics defined individually for each data type.
 >   fieldFormat             :: !Format      -- ^ The format code used by the field; in a 'RowDescription' message returned from the statement variant of 'Describe',
@@ -771,7 +771,7 @@
 > --   * For @FETCH@ commands, the tag has the form “@FETCH /n/@”, where @/n/@ is the number of rows that have been retrieved from the cursor.
 > --   * For @COPY@ commands, the tag has the form “@COPY /n/@”, where @/n/@ is the number of rows copied,
 > --     or “@COPY@” (without the row count) in version of the PostgreSQL server prior to 8.2.
-> type ResultTag = ByteString
+> type ResultTag = Lazy.ByteString
 
 > -- | Session parameters are identified by strict byte strings.
 > type SessionParameterName = ByteString
