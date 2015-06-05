@@ -1,4 +1,4 @@
-> -- | Module:      Database.PostgreSQL.Protocol.Builders
+> -- | Module:    Database.PostgreSQL.Protocol.Builders
 > -- Description: Builders for PostgreSQL messages.
 > -- Copyright:   © 2015 Patryk Zadarnowski <pat@jantar.org>
 > -- License:     BSD3

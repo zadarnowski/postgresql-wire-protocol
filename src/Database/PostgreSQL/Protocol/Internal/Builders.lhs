@@ -1,4 +1,4 @@
-> -- | Module:      Database.PostgreSQL.Protocol.Internal.Builders
+> -- | Module:    Database.PostgreSQL.Protocol.Internal.Builders
 > -- Description: Helper functions for message builders module
 > -- Copyright:   © 2015 Patryk Zadarnowski <pat@jantar.org>
 > -- License:     BSD3

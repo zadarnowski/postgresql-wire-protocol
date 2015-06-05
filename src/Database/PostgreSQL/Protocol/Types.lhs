@@ -104,6 +104,7 @@
 >    pattern NoticeFile,
 >    pattern NoticeLine,
 >    pattern NoticeRoutine,
+>   simpleNotice,
 >   -- * Miscellaneous Types
 >   ChannelName,
 >   ColumnID,
