@@ -44,9 +44,11 @@ library
   exposed-modules:
     Database.PostgreSQL.Protocol.Builders
     Database.PostgreSQL.Protocol.ObjectIDs
+    Database.PostgreSQL.Protocol.Readers
     Database.PostgreSQL.Protocol.Types
 
   build-depends:
     array                   >= 0.5.1.0,
     base                    >= 4.8 && < 5,
-    bytestring              >= 0.10.6.0
+    bytestring              >= 0.10.6.0,
+    cereal                  >= 0.4.1.1
