@@ -34,6 +34,8 @@
 >   Array16, UArray16,
 >   -- * Message Types
 >   SessionMessage (..),
+>    currentMajorVersion,
+>    currentMinorVersion,
 >   SSLResponse (..),
 >   FrontendMessage (..),
 >   BackendMessage (..),
@@ -145,10 +147,11 @@
 > --   on a new socket connection to the backend.
 > data SessionMessage =
 
->   -- | Requests initiation of a new database connection, optionally configuring some session
->   --   parameters to the specified default values. Besides the usual set of server configuration
->   --   parameters that can be configured at runtime using the SQL @SET@ command, 'StartupMessage'
->   --   accepts the following three session-specific parameters:
+>   -- | A message of the form “@StartupMessage m n ps@” requests initiation of a new database
+>   --   connection using protocol version @m.n@, optionally configuring some session parameters
+>   --   to the specified default values. Besides the usual set of server configuration parameters
+>   --   that can be configured at runtime using the SQL @SET@ command, 'StartupMessage' accepts
+>   --   the following three session-specific parameters:
 >   --
 >   --   * @user@, the database user name used to use,
 >   --   * @database@, the target database, and
@@ -158,7 +161,12 @@
 >   --   a database with the same name as the @user@ and an empty set of command-line arguments.
 >   --   In addition, the use of @options@ parameter has been deprecated in favour of setting
 >   --   individual run-time parameters.
->   StartupMessage [(SessionParameterName, ByteString)] |
+>   --
+>   --   The major and minor protocol version should be always set to 'currentMajorVersion'
+>   --   and 'currentMinorVersion', respectively, since PostgreSQL does not maintain backward
+>   --   compatiblity between releases of its protocol, and the current version (3.0) is the
+>   --   only version guaranteed to be supported by this library.
+>   StartupMessage Word16 Word16 [(SessionParameterName, ByteString)] |
 
 >   -- | A message of the form “@CancelRequest pid secret@” requests cancellation of a query
 >   --   currently being executed on the server by another backend process with the process
@@ -172,6 +180,21 @@
 >   --   The server should respond with an 'SSLResponse' message described below.
 >   SSLRequest
 >   deriving (Eq, Ord, Show)
+
+> -- | Current major version of the PostgreSQL wire protocol, to be used in 'StartupMessage'.
+> --   Version number 1234 and higher are reserved for special connection headers such
+> --   as 'CancelRequest' and 'SSLRequest', so actual major version numbers in 'StartupMessage'
+> --   must be equal to 1233 or lower. The current version 3.0 has been introduced in
+> --   PostgreSQL 7.4 and is the only version supported by this library. The previous
+> --   version 2.0, introduced in PostgreSQL 6.4, is incompatible with version 3.0, and
+> --   I was unable to find documentation for the original version 1.0 of the protocol.
+> currentMajorVersion :: Word16
+> currentMajorVersion = 3
+
+> -- | Current minor version of the PostgreSQL wire protocol, set to 0 in all versions of
+> --   the PostgreSQL frontend/backend protocol released so far.
+> currentMinorVersion :: Word16
+> currentMinorVersion = 0
 
 > -- | The type of a special-case response to an 'SSLRequest' message described above.
 > data SSLResponse =

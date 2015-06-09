@@ -34,14 +34,20 @@
 > --   In most cases, this function should probably be avoided in favour
 > --   of a direct use of the individual message type builders defined below.
 > sessionMessage :: SessionMessage -> Builder
-> sessionMessage (StartupMessage ps) = startupMessage ps
+> sessionMessage (StartupMessage m n ps) = startupMessage' m n ps
 > sessionMessage (CancelRequest pid secret) = cancelRequestMessage pid secret
 > sessionMessage (SSLRequest) = sslRequestMessage
 
-> -- | Requests initiation of a new database connection, optionally configuring some session
-> --   parameters to the specified default values. Besides the usual set of server configuration
-> --   parameters that can be configured at runtime using the SQL @SET@ command, 'StartupMessage'
-> --   accepts the following three session-specific parameters:
+> -- | Prepares a startup message with the current version of the PostgreSQL
+> --   frontend/backend protocol; same as @startupMessage' currentMajorVersion currentMinorVersion@.
+> startupMessage ::[(SessionParameterName, ByteString)] -> Builder
+> startupMessage = startupMessage' currentMajorVersion currentMinorVersion
+
+> -- | A message of the form “@StartupMessage m n ps@” requests initiation of a new database
+> --   connection using protocol version @m.n@, optionally configuring some session parameters
+> --   to the specified default values. Besides the usual set of server configuration parameters
+> --   that can be configured at runtime using the SQL @SET@ command, 'StartupMessage' accepts
+> --   the following three session-specific parameters:
 > --
 > --   * @user@, the database user name used to use,
 > --   * @database@, the target database, and
@@ -51,9 +57,18 @@
 > --   a database with the same name as the @user@ and an empty set of command-line arguments.
 > --   In addition, the use of @options@ parameter has been deprecated in favour of setting
 > --   individual run-time parameters.
-> startupMessage :: [(SessionParameterName, ByteString)] -> Builder
-> startupMessage ps = int32BE (9 + sum (map pgParameterSize ps)) <> int32BE 196608 <> mconcat (map pgParameter ps) <> word8 0
+> --
+> --   The major and minor protocol version should be always set to 'currentMajorVersion'
+> --   and 'currentMinorVersion', respectively, since PostgreSQL does not maintain backward
+> --   compatiblity between releases of its protocol, and the current version (3.0) is the
+> --   only version guaranteed to be supported by this library. Accordingly, this function
+> --   should never be used (unless you /really/ know what you're doing!) For every day use
+> --   'startupMessage' (which requests current protocol version implicitly) should be
+> --   always used in preference to @startupMessage'@.
+> startupMessage' :: Word16 -> Word16 -> [(SessionParameterName, ByteString)] -> Builder
+> startupMessage' m n ps = int32BE (9 + sum (map pgParameterSize ps)) <> int32BE version <> mconcat (map pgParameter ps) <> word8 0
 >  where
+>   version = fromIntegral m * 65536 + fromIntegral n
 >   pgParameter (name, value) = pgString name <> pgString value
 >   pgParameterSize (name, value) = pgStringSize name + pgStringSize value
 
