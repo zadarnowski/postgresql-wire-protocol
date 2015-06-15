@@ -19,6 +19,7 @@
 
 > import Control.Monad
 > import Data.Array.IArray
+> import Data.Bits
 > import Data.ByteString (ByteString)
 > import Data.ByteString.Builder
 > import Data.Char
@@ -35,29 +36,19 @@
 >   (n, v) <- readChunk 8 >>= run (liftM2 (,) (fromIntegral <$> getWord32be) getWord32be)
 >   case v of
 >     80877102 -> do require (n == 16) "invalid CancelRequest message length"
->                    req <- readChunk 8
->                    run (liftM2 CancelRequest getWord32be getWord32be) req
+>                    readChunk 8 >>= run (liftM2 CancelRequest getWord32be getWord32be) req
 >     80877103 -> do require (n == 8) "invalid SSLRequest message length"
 >                    return SSLRequest
 >     _        -> do require (n >= 8) "invalid StartupMessage message length"
->                    let (vm', vn') = v `divMod` 65536
->                        vm = fromIntegral vm'
->                        vn = fromIntegral vn'
+>                    let vm = fromIntegral (v `shiftR` 16)
+>                        vn = fromIntegral (v .&. 0xFFFF)
 >                    require (vm == currentMajorVersion && vn == currentMinorVersion) "invalid protocol version in StartupMessage"
->                    req <- readChunk (n - 8)
->                    require (not (Lazy.null req) && Lazy.last req == 0) "missing session parameter list terminator"
->                    let req' = Lazy.init req
->                    ps <- if Lazy.null req' then return [] else makeParameters (Lazy.split 0 req')
->                    return (StartupMessage vm vn ps)
+>                    StartupMessage vm vn <$> makeParameters (Lazy.split 0 req)
 >  where
->   makeParameters (x:y:xs) = do
->     require (not (Lazy.null x)) "null session parameter name"
->     ps <- makeParameters xs
->     return ((Lazy.toStrict x, Lazy.toStrict y) : ps)
->   makeParameters [x] = do
->     require (Lazy.null x) "incomplete session parameter list"
->     return []
->   makeParameters [] = reject "missing session parameter list terminator"
+>   makeParameters (pn:pv:ps') =
+>     | Lazy.null pn = require (Lazy.null pv && null ps') "missing session parameter list terminator" >> return []
+>     | otherwise    = liftM2 (:) (return (Lazy.toStrict pn, pv)) (makeParameters ps')
+>   makeParameters _ = reject "missing session parameter list terminator"
 
 > readFrontendMessage :: MonadPlus m => (Int32 -> m Lazy.ByteString) -> m FrontendMessage
 > readFrontendMessage readChunk = do
@@ -95,29 +86,29 @@
 > readBackendMessage readChunk = do
 >   (t, n) <- readChunk 5 >>= run getHeader
 >   case t of
->     'R' -> readMessage n $ readChunk >=> AuthenticationResponse <$> run (getAuthenticationResponse n')
->     'K' -> readMessage n $ readChunk >=> run (liftM2 BackendKeyData getWord32be getWord32be)
->     '2' -> makeTrivialMessage n BindComplete
->     '3' -> makeTrivialMessage n CloseComplete
->     'C' -> readMessage n $ readChunk >=> CommandComplete <$> makeLazyByteStringZ
->     'd' -> readMessage n $ readChunk >=> CopyOutData <$> pure
->     'c' -> makeTrivialMessage n CopyOutDone
->     'G' -> readMessage n $ readChunk >=> run (liftM2 CopyInResponse getWord8 (getArray getWord16be))
->     'H' -> readMessage n $ readChunk >=> run (liftM2 CopyOutResponse getWord8 (getArray getWord16be))
->     'W' -> readMessage n $ readChunk >=> run (liftM2 CopyBothResponse getWord8 (getArray getWord16be))
->     'D' -> readMessage n $ readChunk >=> run (DataRow <$> getArray getValue)
->     'I' -> makeTrivialMessage n EmptyQueryResponse
->     'E' -> readMessage n $ readChunk >=> ErrorResponse <$> makeNoticeFields
->     'V' -> readMessage n $ readChunk >=> run (FunctionCallResponse <$> getValue)
->     'n' -> makeTrivialMessage n NoData
->     'N' -> readMessage n $ readChunk >=> NoticeResponse <$> makeNoticeFields
->     'A' -> readMessage n $ readChunk >=> run (liftM3 NotificationResponse getWord32be getByteStringZ getLazyByteStringZ) -- TODO: faster trailing string fetch
->     't' -> readMessage n $ readChunk >=> run (ParameterDescription <$> getArray getWord32be)
->     'S' -> readMessage n $ readChunk >=> run (liftM2 ParameterStatus getByteStringZ getLazyByteStringZ) -- TODO: faster trailing string fetch
->     '1' -> makeTrivialMessage n ParseComplete
->     's' -> makeTrivialMessage n PortalSuspended
->     'Z' -> readMessage n $ readChunk >=> run (ReadyForQuery <$> getWord8)
->     'T' -> readMessage n $ readChunk >=> run (RowDescription <$> getArray getFieldDescription)
+>     -- 'R' -> readMessage n $ readChunk >=> AuthenticationResponse <$> run getAuthenticationResponse
+>     -- 'K' -> readMessage n $ readChunk >=> run (liftM2 BackendKeyData getWord32be getWord32be)
+>     -- '2' -> makeTrivialMessage n BindComplete
+>     -- '3' -> makeTrivialMessage n CloseComplete
+>     -- 'C' -> readMessage n $ readChunk >=> CommandComplete <$> makeLazyByteStringZ
+>     -- 'd' -> readMessage n $ readChunk >=> CopyOutData <$> pure
+>     -- 'c' -> makeTrivialMessage n CopyOutDone
+>     -- 'G' -> readMessage n $ readChunk >=> run (liftM2 CopyInResponse getWord8 (getArray getWord16be))
+>     -- 'H' -> readMessage n $ readChunk >=> run (liftM2 CopyOutResponse getWord8 (getArray getWord16be))
+>     -- 'W' -> readMessage n $ readChunk >=> run (liftM2 CopyBothResponse getWord8 (getArray getWord16be))
+>     -- 'D' -> readMessage n $ readChunk >=> run (DataRow <$> getArray getValue)
+>     -- 'I' -> makeTrivialMessage n EmptyQueryResponse
+>     -- 'E' -> readMessage n $ readChunk >=> ErrorResponse <$> makeNoticeFields
+>     -- 'V' -> readMessage n $ readChunk >=> run (FunctionCallResponse <$> getValue)
+>     -- 'n' -> makeTrivialMessage n NoData
+>     -- 'N' -> readMessage n $ readChunk >=> NoticeResponse <$> makeNoticeFields
+>     -- 'A' -> readMessage n $ readChunk >=> run (liftM3 NotificationResponse getWord32be getByteStringZ getRemainingLazyByteStringZ)
+>     -- 't' -> readMessage n $ readChunk >=> run (ParameterDescription <$> getArray getWord32be)
+>     -- 'S' -> readMessage n $ readChunk >=> run (liftM2 ParameterStatus getByteStringZ getRemainingLazyByteStringZ)
+>     -- '1' -> makeTrivialMessage n ParseComplete
+>     -- 's' -> makeTrivialMessage n PortalSuspended
+>     -- 'Z' -> readMessage n $ readChunk >=> run (ReadyForQuery <$> getWord8)
+>     -- 'T' -> readMessage n $ readChunk >=> run (RowDescription <$> getArray getFieldDescription)
 >     _   -> reject "unrecognized backend message received"
 
   "require p msg" is the same as "guard p", but labeled with an informative message for documentation and possible future debugging purposes:
@@ -134,12 +125,12 @@
   the PostgreSQL inclusion of the length field in the total length value:
 
 > readMessage :: MonadPlus m => Int32 -> (Int32 -> m a) -> m a
-> readMessage n rk = require (n >= 4) "message too short" >> r (n - 4)
+> readMessage n rk = require (n >= 4) "message too short" >> rk (n - 4)
 
   Prepare a parameterless message of length @n@ with the Haskell constructor $k$.
   Because the message accepts no arguments, @n@ must be equal to 4:
 
-> makeTrivialMessage :: MonadPlus m -> Int32 -> a -> m a
+> makeTrivialMessage :: MonadPlus m => Int32 -> a -> m a
 > makeTrivialMessage n k = require (n == 4) "invalid nullary message length" >> return k
 
   Process a newly-received PostgreSQL string value by stripping its NUL terminator
@@ -164,7 +155,7 @@
 >     require (Lazy.last s' == 0) "invalid notice field received: missing NUL terminator byte"
 >     let s'' = Lazy.init s' -- strip the NUL terminator of the final field
 >     let ss = if Lazy.null s'' then [Nothing] else map Lazy.uncons (Lazy.split 0 s'')
->     mapM (maybe (reject "invalid notice field received: missing tag byte") (\(t, m) -> (t, Lazy.toStrict m))) ss
+>     mapM (maybe (reject "invalid notice field received: missing tag byte") (return)) ss
 
   Run a "Get" value inside an arbitrary MonadPlus, ensuring that the entire input string
   is consumed by the getter and discarding any internally-generated error messages:
@@ -180,19 +171,19 @@
 > getHeader :: Get (Char, Int32)
 > getHeader = liftM2 (,) (chr <$> fromIntegral <$> getWord8) (fromIntegral <$> getWord32be)
 
-> getAuthenticationResponse ::  Int32 -> Get AuthenticationResponse
-> getAuthenticationResponse n = do
+> getAuthenticationResponse :: Get AuthenticationResponse
+> getAuthenticationResponse = do
 >   t <- getWord32be
 >   case t of
->     0 -> return AuthenticationOK
+>     0 -> return AuthenticationOk
 >     2 -> return AuthenticationKerberosV5
 >     3 -> return AuthenticationCleartextPassword
 >     5 -> AuthenticationMD5Password <$> getWord32be
 >     6 -> return AuthenticationSCMCredential
 >     7 -> return AuthenticationGSS
->     8 -> AuthenticationGSSContinue <$> getLazyByteString (fromIntegral (n - 4))
+>     8 -> AuthenticationGSSContinue <$> getRemainingLazyByteString
 >     9 -> return AuthenticationSSPI
->     _ -> AuthenticationMiscellaneous t <$> getLazyByteString (fromIntegral (n - 4))
+>     _ -> AuthenticationMiscellaneous t <$> getRemainingLazyByteString
 
 > getArray :: IArray a e => Get e -> Get (a Int16 e)
 > getArray getElem = do
@@ -210,7 +201,7 @@
 >     return Nothing
 
 > getByteStringZ :: Get ByteString
-> getByteStringZ = Lazy.toStrict <$> getVariableLazyByteStringZ
+> getByteStringZ = Lazy.toStrict <$> getLazyByteStringZ
 
 > getLazyByteStringZ :: Get Lazy.ByteString
 > getLazyByteStringZ = loop mempty
@@ -221,3 +212,27 @@
 >       0 -> return (toLazyByteString s)
 >       _ -> loop (s <> word8 c)
 
+> getRemainingLazyByteString :: Get Lazy.ByteString
+> getRemainingLazyByteString = fromIntegral <$> remaining >>= getLazyByteString
+
+> getRemainingLazyByteStringZ :: Get Lazy.ByteString
+> getRemainingLazyByteStringZ = getRemainingLazyByteString >>= makeLazyByteStringZ
+
+> getFieldDescription :: Get FieldDescription
+> getFieldDescription = do
+>   name <- getByteStringZ
+>   tableID <- getWord32be
+>   columnID <- fromIntegral <$> getWord16be
+>   dataTypeID <- getWord32be
+>   dataTypeSize <- fromIntegral <$> getWord16be
+>   dataTypeModifier <- getWord32be
+>   format <- getWord16be
+>   return FieldDescription {
+>      fieldName = name,
+>      fieldTableID = tableID,
+>      fieldColumnID = columnID,
+>      fieldDataTypeID = dataTypeID,
+>      fieldDataTypeSize = dataTypeSize,
+>      fieldDataTypeModifier = dataTypeModifier,
+>      fieldFormat = format
+>    }

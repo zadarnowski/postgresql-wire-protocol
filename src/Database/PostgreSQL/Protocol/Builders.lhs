@@ -16,7 +16,6 @@
 
 > module Database.PostgreSQL.Protocol.Builders where
 
-> import Data.ByteString (ByteString)
 > import Data.ByteString.Builder
 > import Data.Int
 > import Data.Monoid
@@ -40,7 +39,7 @@
 
 > -- | Prepares a startup message with the current version of the PostgreSQL
 > --   frontend/backend protocol; same as @startupMessage' currentMajorVersion currentMinorVersion@.
-> startupMessage ::[(SessionParameterName, ByteString)] -> Builder
+> startupMessage ::[(ParameterName, ValueString)] -> Builder
 > startupMessage = startupMessage' currentMajorVersion currentMinorVersion
 
 > -- | A message of the form “@StartupMessage m n ps@” requests initiation of a new database
@@ -65,12 +64,12 @@
 > --   should never be used (unless you /really/ know what you're doing!) For every day use
 > --   'startupMessage' (which requests current protocol version implicitly) should be
 > --   always used in preference to @startupMessage'@.
-> startupMessage' :: Word16 -> Word16 -> [(SessionParameterName, ByteString)] -> Builder
+> startupMessage' :: Word16 -> Word16 -> [(ParameterName, ValueString)] -> Builder
 > startupMessage' m n ps = int32BE (9 + sum (map pgParameterSize ps)) <> int32BE version <> mconcat (map pgParameter ps) <> word8 0
 >  where
 >   version = fromIntegral m * 65536 + fromIntegral n
->   pgParameter (name, value) = pgString name <> pgString value
->   pgParameterSize (name, value) = pgStringSize name + pgStringSize value
+>   pgParameter (name, value) = pgString name <> pgLazyString value
+>   pgParameterSize (name, value) = pgStringSize name + pgLazyStringSize value
 
 > -- | A message of the form “@CancelRequest pid secret@” requests cancellation of a query
 > --   currently being executed on the server by another backend process with the process
@@ -204,8 +203,8 @@
 > -- | A message of the form “@CopyFail msg@” should be sent by the frontend to indicate
 > --   inability to supply the required @COPY@ data stream. The byte string @msg@ should
 > --   provide a human-readable description of the exact error condition behind the failure.
-> copyFailMessage :: ByteString -> Builder
-> copyFailMessage msg = char8 'f' <> int32BE (5 + pgStringSize msg) <> pgString msg
+> copyFailMessage :: ValueString -> Builder
+> copyFailMessage msg = char8 'f' <> int32BE (5 + pgLazyStringSize msg) <> pgLazyString msg
 
 > -- | A message of the form “@Describe k x@” requests that the backend provide details about
 > --   the session object @x@ of type @k@ (either a 'StatementObject' created by the 'Parse'
@@ -261,8 +260,8 @@
 
 > -- | Supplies a password string in response to an 'Authentication' message from the
 > --   backend, encrypted if required using the method requested by the backend.
-> passwordMessage :: ByteString -> Builder
-> passwordMessage secret = char8 'p' <> int32BE (4 + pgStringSize secret) <> pgString secret
+> passwordMessage :: ValueString -> Builder
+> passwordMessage secret = char8 'p' <> int32BE (4 + pgLazyStringSize secret) <> pgLazyString secret
 
 > -- | A message of the form “@Query q@” requests a streamlined processing of the SQL
 > --   command @q@, which should be parsed, bound, executed and eventually closed by
@@ -480,8 +479,8 @@
 > errorResponseMessage :: NoticeFields -> Builder
 > errorResponseMessage nfs = char8 'E' <> int32BE (5 + sum (map pgNoticeFieldSize nfs)) <> mconcat (map pgNoticeField nfs) <> word8 0
 >  where
->   pgNoticeField (t, x) = word8 t <> pgString x
->   pgNoticeFieldSize (_, x) = 1 + pgStringSize x
+>   pgNoticeField (t, x) = word8 t <> pgLazyString x
+>   pgNoticeFieldSize (_, x) = 1 + pgLazyStringSize x
 
 > -- | Sent by the backend to indicate successful completion of a 'FunctionCall'
 > --   operation, with the sole value returned by the function call (possibly @NULL@.)
@@ -502,8 +501,8 @@
 > noticeResponseMessage :: NoticeFields -> Builder
 > noticeResponseMessage nfs = char8 'N' <> int32BE (5 + sum (map pgNoticeFieldSize nfs)) <> mconcat (map pgNoticeField nfs) <> word8 0
 >  where
->   pgNoticeField (t, x) = word8 t <> pgString x
->   pgNoticeFieldSize (_, x) = 1 + pgStringSize x
+>   pgNoticeField (t, x) = word8 t <> pgLazyString x
+>   pgNoticeFieldSize (_, x) = 1 + pgLazyStringSize x
 
 > -- | A message of the form “@NotificationResponse pid c x@” is sent by the backend
 > --   to inform the frontend of a @NOTIFY@ event issued by the backend process @pid@,
@@ -511,9 +510,9 @@
 > --   such messages from the backend at any time after the initial 'StartupMessage'
 > --   of a communication session, irrespective of any other message exchanges being
 > --   conducted.
-> notificationResponseMessage :: ProcessID -> ChannelName -> ByteString -> Builder
+> notificationResponseMessage :: ProcessID -> ChannelName -> ValueString -> Builder
 > notificationResponseMessage pid c x =
->   char8 'A' <> int32BE (8 + pgStringSize c + pgStringSize x) <> word32BE pid <> pgString c <> pgString x
+>   char8 'A' <> int32BE (8 + pgStringSize c + pgLazyStringSize x) <> word32BE pid <> pgString c <> pgLazyString x
 
 > -- | Sent by the backend in response to a statement variant of a 'Describe' message,
 > --   with object IDs of the types of all parameters required by the statement.
@@ -533,8 +532,8 @@
 > --   following parametes: @server_version@, @server_encoding@, @client_encoding@,
 > --   @application_name@, @is_superuser@, @session_authorization@, @DateStyle@,
 > --   @IntervalStyle@, @TimeZone@, @integer_datetimes@ and @standard_conforming_strings@.
-> parameterStatusMessage :: SessionParameterName -> ByteString -> Builder
-> parameterStatusMessage p x = char8 'S' <> int32BE (4 + pgStringSize p + pgStringSize x) <> pgString p <> pgString x
+> parameterStatusMessage :: ParameterName -> ValueString -> Builder
+> parameterStatusMessage p x = char8 'S' <> int32BE (4 + pgStringSize p + pgLazyStringSize x) <> pgString p <> pgLazyString x
 
 > -- | Sent by the backend in response to a successful completion of a 'Parse' operation.
 > parseCompleteMessage :: Builder

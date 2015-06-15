@@ -112,10 +112,11 @@
 >   DataString,
 >   FieldName,
 >   ObjectID,
+>   ParameterName,
 >   ProcessID,
 >   QueryString,
 >   ResultTag,
->   SessionParameterName,
+>   ValueString,
 > ) where
 
 > import Data.Array
@@ -165,7 +166,7 @@
 >   --   and 'currentMinorVersion', respectively, since PostgreSQL does not maintain backward
 >   --   compatiblity between releases of its protocol, and the current version (3.0) is the
 >   --   only version guaranteed to be supported by this library.
->   StartupMessage Word16 Word16 [(SessionParameterName, ByteString)] |
+>   StartupMessage Word16 Word16 [(ParameterName, ValueString)] |
 
 >   -- | A message of the form “@CancelRequest pid secret@” requests cancellation of a query
 >   --   currently being executed on the server by another backend process with the process
@@ -273,7 +274,7 @@
 >   -- | A message of the form “@CopyFail msg@” should be sent by the frontend to indicate
 >   --   inability to supply the required @COPY@ data stream. The byte string @msg@ should
 >   --   provide a human-readable description of the exact error condition behind the failure.
->   CopyFail ByteString |
+>   CopyFail ValueString |
 
 >   -- | A message of the form “@Describe k x@” requests that the backend provide details about
 >   --   the session object @x@ of type @k@ (either a 'StatementObject' created by the 'Parse'
@@ -313,7 +314,7 @@
 
 >   -- | Supplies a password string in response to an 'Authentication' message from the
 >   --   backend, encrypted if required using the method requested by the backend.
->   PasswordMessage ByteString |
+>   PasswordMessage ValueString |
 
 >   -- | A message of the form “@Query q@” requests a streamlined processing of the SQL
 >   --   command @q@, which should be parsed, bound, executed and eventually closed by
@@ -442,7 +443,7 @@
 >   --   such messages from the backend at any time after the initial 'StartupMessage'
 >   --   of a communication session, irrespective of any other message exchanges being
 >   --   conducted.
->   NotificationResponse !ProcessID ChannelName ByteString |
+>   NotificationResponse !ProcessID ChannelName ValueString |
 
 >   -- | Sent by the backend in response to a statement variant of a 'Describe' message,
 >   --   with object IDs of the types of all parameters required by the statement.
@@ -461,7 +462,7 @@
 >   --   following parametes: @server_version@, @server_encoding@, @client_encoding@,
 >   --   @application_name@, @is_superuser@, @session_authorization@, @DateStyle@,
 >   --   @IntervalStyle@, @TimeZone@, @integer_datetimes@ and @standard_conforming_strings@.
->   ParameterStatus SessionParameterName ByteString |
+>   ParameterStatus ParameterName ValueString |
 
 >   -- | Sent by the backend in response to a successful completion of a 'Parse' operation.
 >   ParseComplete |
@@ -577,7 +578,7 @@
 > -- | Data values supplied as parameters to SQL commands and returned back from the
 > --   server as query result elements are represented by optional lazy bytestrings,
 > --   with @NULL@ depicated as 'Nothing'.
-> type Value = Maybe Lazy.ByteString
+> type Value = Maybe DataString
 
 
   Data Transmission Formats
@@ -670,7 +671,7 @@
 > --   describing one particular aspect of an error condition or notice message,
 > --   as identified by the /tag/ @t@. The precise semantics of the associated
 > --   field value @x@ are described individually below for each known tag byte.
-> type NoticeField = (NoticeFieldTag, ByteString)
+> type NoticeField = (NoticeFieldTag, ValueString)
 
 > -- | Tags describing semantics of individual fields within a notice or error response.
 > type NoticeFieldTag = Word8
@@ -797,4 +798,7 @@
 > type ResultTag = Lazy.ByteString
 
 > -- | Session parameters are identified by strict byte strings.
-> type SessionParameterName = ByteString
+> type ParameterName = ByteString
+
+> -- | NUL-terminated runtime parameter value, represented by a lazy byte string.
+> type ValueString = Lazy.ByteString
