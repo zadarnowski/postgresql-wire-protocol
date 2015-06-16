@@ -36,79 +36,68 @@
 >   (n, v) <- readChunk 8 >>= run (liftM2 (,) (fromIntegral <$> getWord32be) getWord32be)
 >   case v of
 >     80877102 -> do require (n == 16) "invalid CancelRequest message length"
->                    readChunk 8 >>= run (liftM2 CancelRequest getWord32be getWord32be) req
+>                    readChunk 8 >>= run (liftM2 CancelRequest getWord32be getWord32be)
 >     80877103 -> do require (n == 8) "invalid SSLRequest message length"
 >                    return SSLRequest
 >     _        -> do require (n >= 8) "invalid StartupMessage message length"
 >                    let vm = fromIntegral (v `shiftR` 16)
 >                        vn = fromIntegral (v .&. 0xFFFF)
 >                    require (vm == currentMajorVersion && vn == currentMinorVersion) "invalid protocol version in StartupMessage"
+>                    req <- readChunk (n - 8)
 >                    StartupMessage vm vn <$> makeParameters (Lazy.split 0 req)
 >  where
->   makeParameters (pn:pv:ps') =
+>   makeParameters (pn:pv:ps')
 >     | Lazy.null pn = require (Lazy.null pv && null ps') "missing session parameter list terminator" >> return []
->     | otherwise    = liftM2 (:) (return (Lazy.toStrict pn, pv)) (makeParameters ps')
+>     | otherwise    = liftM2 (:) (pure (Lazy.toStrict pn, pv)) (makeParameters ps')
 >   makeParameters _ = reject "missing session parameter list terminator"
 
 > readFrontendMessage :: MonadPlus m => (Int32 -> m Lazy.ByteString) -> m FrontendMessage
 > readFrontendMessage readChunk = do
 >   (t, n) <- readChunk 5 >>= run getHeader
->   let n' = n - 4
 >   case t of
->     'B' -> guard (n >  4) >> readChunk n' >>= run getBind
->     'C' -> guard (n >  4) >> readChunk n' >>= run (getClose n')
->     'd' -> guard (n >  4) >> readChunk n' >>= run (getCopyData n')
->     'c' -> guard (n == 4) >> return CopyInDone
->     'f' -> guard (n >  4) >> readChunk n' >>= run (getCopyFail n')
->     'D' -> guard (n >  4) >> readChunk n' >>= run (getDescribe n')
->     'E' -> guard (n >  4) >> readChunk n' >>= run (getExecute n')
->     'H' -> guard (n == 4) >> return Flush
->     'F' -> guard (n >  4) >> readChunk n' >>= run getFunctionCall
->     'P' -> guard (n >  4) >> readChunk n' >>= run getParse
->     'p' -> guard (n >  4) >> readChunk n' >>= run (getPasswordMessage n)
->     'Q' -> guard (n >  4) >> readChunk n' >>= run (getQuery n)
->     'S' -> guard (n == 4) >> return Sync
->     'X' -> guard (n == 4) >> return Terminate
->     _   -> mzero
->  where
->   getBind              = liftM5 Bind (getByteStringZ) (getByteStringZ) (getArray getWord16be) (getArray getValue) (getArray getWord16be)
->   getClose n           = liftM2 Close (getWord8) (getByteString (fromIntegral (n - 1)))
->   getCopyData n        = liftM  CopyInData (getLazyByteString (fromIntegral n))
->   getCopyFail n        = liftM  CopyFail (getByteString (fromIntegral n))
->   getDescribe n        = liftM2 Describe (getWord8) (getByteString (fromIntegral (n - 1)))
->   getExecute n         = liftM2 Execute (getByteString (fromIntegral (n - 4))) (fromIntegral <$> getWord32be)
->   getFunctionCall      = liftM4 FunctionCall (getWord32be) (getArray getWord16be) (getArray getValue) (getWord16be)
->   getParse             = liftM3 Parse (getByteStringZ) (getLazyByteStringZ) (getArray getWord32be)
->   getPasswordMessage n = liftM  PasswordMessage (getByteString (fromIntegral n))
->   getQuery n           = liftM  Query (getLazyByteString (fromIntegral n))
+>     'B' -> readMessage n $ readChunk >=> run (liftM5 Bind getByteStringZ getByteStringZ (getArray getWord16be) (getArray getValue) (getArray getWord16be))
+>     'C' -> readMessage n $ readChunk >=> run (liftM2 Close getWord8 getRemainingByteStringZ)
+>     'd' -> readMessage n $ readChunk >=> return . CopyInData
+>     'c' -> makeTrivialMessage n CopyInDone
+>     'f' -> readMessage n $ readChunk >=> makeLazyByteStringZ >=> return . CopyFail
+>     'D' -> readMessage n $ readChunk >=> run (liftM2 Describe getWord8 getRemainingByteStringZ)
+>     'E' -> readMessage n $ readChunk >=> run (liftM2 Execute getByteStringZ (fromIntegral <$> getWord32be))
+>     'H' -> makeTrivialMessage n Flush
+>     'F' -> readMessage n $ readChunk >=> run (liftM4 FunctionCall getWord32be (getArray getWord16be) (getArray getValue) getWord16be)
+>     'P' -> readMessage n $ readChunk >=> run (liftM3 Parse getByteStringZ getLazyByteStringZ (getArray getWord32be))
+>     'p' -> readMessage n $ readChunk >=> makeLazyByteStringZ >=> return . PasswordMessage
+>     'Q' -> readMessage n $ readChunk >=> makeLazyByteStringZ >=> return . Query
+>     'S' -> makeTrivialMessage n Sync
+>     'X' -> makeTrivialMessage n Terminate
+>     _   -> reject "unrecognized message"
 
 > readBackendMessage :: MonadPlus m => (Int32 -> m Lazy.ByteString) -> m BackendMessage
 > readBackendMessage readChunk = do
 >   (t, n) <- readChunk 5 >>= run getHeader
 >   case t of
->     -- 'R' -> readMessage n $ readChunk >=> AuthenticationResponse <$> run getAuthenticationResponse
->     -- 'K' -> readMessage n $ readChunk >=> run (liftM2 BackendKeyData getWord32be getWord32be)
->     -- '2' -> makeTrivialMessage n BindComplete
->     -- '3' -> makeTrivialMessage n CloseComplete
->     -- 'C' -> readMessage n $ readChunk >=> CommandComplete <$> makeLazyByteStringZ
->     -- 'd' -> readMessage n $ readChunk >=> CopyOutData <$> pure
->     -- 'c' -> makeTrivialMessage n CopyOutDone
->     -- 'G' -> readMessage n $ readChunk >=> run (liftM2 CopyInResponse getWord8 (getArray getWord16be))
->     -- 'H' -> readMessage n $ readChunk >=> run (liftM2 CopyOutResponse getWord8 (getArray getWord16be))
->     -- 'W' -> readMessage n $ readChunk >=> run (liftM2 CopyBothResponse getWord8 (getArray getWord16be))
->     -- 'D' -> readMessage n $ readChunk >=> run (DataRow <$> getArray getValue)
->     -- 'I' -> makeTrivialMessage n EmptyQueryResponse
->     -- 'E' -> readMessage n $ readChunk >=> ErrorResponse <$> makeNoticeFields
->     -- 'V' -> readMessage n $ readChunk >=> run (FunctionCallResponse <$> getValue)
->     -- 'n' -> makeTrivialMessage n NoData
->     -- 'N' -> readMessage n $ readChunk >=> NoticeResponse <$> makeNoticeFields
->     -- 'A' -> readMessage n $ readChunk >=> run (liftM3 NotificationResponse getWord32be getByteStringZ getRemainingLazyByteStringZ)
->     -- 't' -> readMessage n $ readChunk >=> run (ParameterDescription <$> getArray getWord32be)
->     -- 'S' -> readMessage n $ readChunk >=> run (liftM2 ParameterStatus getByteStringZ getRemainingLazyByteStringZ)
->     -- '1' -> makeTrivialMessage n ParseComplete
->     -- 's' -> makeTrivialMessage n PortalSuspended
->     -- 'Z' -> readMessage n $ readChunk >=> run (ReadyForQuery <$> getWord8)
->     -- 'T' -> readMessage n $ readChunk >=> run (RowDescription <$> getArray getFieldDescription)
+>     'R' -> readMessage n $ readChunk >=> run getAuthenticationResponse >=> pure . AuthenticationResponse
+>     'K' -> readMessage n $ readChunk >=> run (liftM2 BackendKeyData getWord32be getWord32be)
+>     '2' -> makeTrivialMessage n BindComplete
+>     '3' -> makeTrivialMessage n CloseComplete
+>     'C' -> readMessage n $ readChunk >=> makeLazyByteStringZ >=> return . CommandComplete
+>     'd' -> readMessage n $ readChunk >=> return . CopyOutData
+>     'c' -> makeTrivialMessage n CopyOutDone
+>     'G' -> readMessage n $ readChunk >=> run (liftM2 CopyInResponse getWord8 (getArray getWord16be))
+>     'H' -> readMessage n $ readChunk >=> run (liftM2 CopyOutResponse getWord8 (getArray getWord16be))
+>     'W' -> readMessage n $ readChunk >=> run (liftM2 CopyBothResponse getWord8 (getArray getWord16be))
+>     'D' -> readMessage n $ readChunk >=> run (liftM  DataRow (getArray getValue))
+>     'I' -> makeTrivialMessage n EmptyQueryResponse
+>     'E' -> readMessage n $ readChunk >=> makeNoticeFields >=> return . ErrorResponse
+>     'V' -> readMessage n $ readChunk >=> run (liftM  FunctionCallResponse getValue)
+>     'n' -> makeTrivialMessage n NoData
+>     'N' -> readMessage n $ readChunk >=> makeNoticeFields >=> return . NoticeResponse
+>     'A' -> readMessage n $ readChunk >=> run (liftM3 NotificationResponse getWord32be getByteStringZ getRemainingLazyByteStringZ)
+>     't' -> readMessage n $ readChunk >=> run (liftM  ParameterDescription (getArray getWord32be))
+>     'S' -> readMessage n $ readChunk >=> run (liftM2 ParameterStatus getByteStringZ getRemainingLazyByteStringZ)
+>     '1' -> makeTrivialMessage n ParseComplete
+>     's' -> makeTrivialMessage n PortalSuspended
+>     'Z' -> readMessage n $ readChunk >=> run (liftM  ReadyForQuery getWord8)
+>     'T' -> readMessage n $ readChunk >=> run (liftM  RowDescription (getArray getFieldDescription))
 >     _   -> reject "unrecognized backend message received"
 
   "require p msg" is the same as "guard p", but labeled with an informative message for documentation and possible future debugging purposes:
@@ -138,6 +127,7 @@
 
 > makeLazyByteStringZ :: MonadPlus m => Lazy.ByteString -> m Lazy.ByteString
 > makeLazyByteStringZ s = do
+>   let ss = Lazy.split 0 s
 >   require (not (Lazy.null s) && Lazy.last s == 0) "invalid string received: missing NUL terminator byte"
 >   let s' = Lazy.init s
 >   require (Lazy.notElem 0 s') "invalid string received: embedded NUL bytes found"
@@ -146,16 +136,15 @@
   Process a newly-received PostgreSQL notice:
 
 > makeNoticeFields :: MonadPlus m => Lazy.ByteString -> m NoticeFields
-> makeNoticeFields s = do
->   require (not (Lazy.null s) && Lazy.last s == 0) "invalid notice received: missing NUL terminator byte"
->   let s' = Lazy.init s -- strip the NUL terminator of the entire message
->   if Lazy.null s' then
->     return []
->   else do
->     require (Lazy.last s' == 0) "invalid notice field received: missing NUL terminator byte"
->     let s'' = Lazy.init s' -- strip the NUL terminator of the final field
->     let ss = if Lazy.null s'' then [Nothing] else map Lazy.uncons (Lazy.split 0 s'')
->     mapM (maybe (reject "invalid notice field received: missing tag byte") (return)) ss
+> makeNoticeFields = makeParameters . Lazy.split 0
+>  where
+>   makeParameters (s:ss') =
+>     case Lazy.uncons s of
+>       Just tp -> liftM2 (:) (pure tp) (makeParameters ss')
+>       Nothing -> case ss' of
+>                    (s':ss'') -> require (Lazy.null s' && null ss'') "invalid notice received: missing parameter tag byte" >> return []
+>                    [] -> reject "invalid notice received: missing NUL terminator byte"
+>   makeParameters [] = reject "invalid notice received: missing NUL terminator byte"
 
   Run a "Get" value inside an arbitrary MonadPlus, ensuring that the entire input string
   is consumed by the getter and discarding any internally-generated error messages:
@@ -211,6 +200,12 @@
 >     case c of
 >       0 -> return (toLazyByteString s)
 >       _ -> loop (s <> word8 c)
+
+> getRemainingByteString :: Get ByteString
+> getRemainingByteString = Lazy.toStrict <$> getRemainingLazyByteString
+
+> getRemainingByteStringZ :: Get ByteString
+> getRemainingByteStringZ = Lazy.toStrict <$> getRemainingLazyByteStringZ
 
 > getRemainingLazyByteString :: Get Lazy.ByteString
 > getRemainingLazyByteString = fromIntegral <$> remaining >>= getLazyByteString
