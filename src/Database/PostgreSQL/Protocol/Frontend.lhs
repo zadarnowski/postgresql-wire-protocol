@@ -1,164 +1,61 @@
-> -- | Module:      Database.PostgreSQL.Protocol.Client.Connection
-> -- | Description: Connection type for PostgreSQL clients
+> -- | Module:      Database.PostgreSQL.Protocol.Frontend
+> -- | Description: Generic asynchronous PostgreSQL frontend structure
 > -- | Copyright:   © 2015 Patryk Zadarnowski <pat@jantar.org>
 > -- | License:     BSD3
 > -- | Maintainer:  pat@jantar.org
 > -- | Stability:   experimental
 > -- | Portability: portable
+> --
+> -- This module defines a primitive low-level structure of a generic
+> -- PostgreSQL frontend capable of asynchronous message transmission
+> -- and reception.
+> --
+> -- Each @FrontendSession@ consists of a pair of FIFO queues (concurrent channels)
+> -- used for sending messages to the backend and receiving messages back.
+> -- Further, two threads are created to facilitate asynchronous servicing
+> -- of these queues. All higher-level abstractions (such as performing an
+> -- actual query using PostgreSQL simple or extended query protocol)
+> -- are to be implemented separately on top of the 
 
 > module Database.PostgreSQL.Protocol.Client.Connection (
->   Connection
+>   Frontend
 > ) where
 
+> import Control.Concurrent.Chan
 > import Control.Concurrent.MVar
-> import Control.Exception
-> import Database.PostgreSQL.Protocol.Internal.Queue (Queue)
-> import Network.Socket (Socket, SockAddr)
+> -- import Control.Exception
+> -- import Network.Socket (Socket, SockAddr)
 
-> import qualified Network.Socket as Socket
+> -- import qualified Network.Socket as Socket
 
-> import qualified Database.PostgreSQL.Protocol.Internal.Queue as Queue
-
-> data Connection = Connection {
->   connectionSocket           :: Socket,
->   connectionStatusVar        :: MVar Bool,    -- True: connection open; False: connection closed; empty: receiver thread busy executing user code
->   connectionReceiverThreadId :: ThreadId,
->   connectionReceiverQueueVar :: MVar (Queue (forall a. BackendMessageHandler a -> a))
+> data FrontendSession = FrontendSession {
+>   frontendSendQueue  :: Chan FrontendMessage,
+>   frontendRecvQueue  :: Chan BackendMessage,
+>   frontendProcQueue  :: Chan BackendMessageHandler,
+>   frontendSendThread :: ThreadId,
+>   frontendRecvThread :: ThreadId,
+>   frontendProcThread :: ThreadId
 > }
 
-> data BackendMessageHandler = BackendMessageHandler {
->   ...
-> }
+> newtype BackendMessageHandler :: Consume (BackendMessage -> IO BackendMessageHandler) | Pass
 
-> data BackendNotificationHandler = BackendNotificationHandler {
->   onNoticeResponse       :: BackendNotificationHandler -> [(Char, ByteString)] -> IO (),
->   onNotificationResponse :: BackendNotificationHandler -> Int32 -> ByteString -> ByteString -> IO (),
->   onParameterStatus      :: BackendNotificationHandler -> ByteString -> ByteString -> IO (),
->   onUnrecognizedMessage  :: BackendNotificationHandler -> Char -> IO (),
->   onCorruptedMessage     :: BackendNotificationHandler -> Char -> IO (),
->   onProtocolError        :: BackendNotificationHandler -> [(Char, ByteString)] -> IO (),
->   onCommunicationError   :: BackendNotificationHandler -> [(Char, ByteString)] -> IO ()
-> }
+  TODO: handle exceptions!
 
-> backendNotificationHandler :: BackendNotificationHandler
-> backendNotificationHandler = BackendNotificationHandler {
->   onNoticeResponse       = \ _this  parameters -> printNotice parameters,
->   onNotificationResponse = \ _this _pid _channel _payload -> return (),
->   onParameterStatus      = \ _this _parameter _value -> return (),
->   onUnrecognizedMessage  = \  this  tag -> onProtocolError this this (unrecognizedMessageNotice tag),
->   onCorruptedMessage     = \  this  tag -> onProtocolError this this (corruptedMessageNotice tag),
->   onProtocolError        = \  this  parameters -> onCommunicationError (show parameters,
->   onCommunicationError   = \ _this  parameters -> printNotice communicationErrorNotice >> throw ...,
-> }
-
-> unrecognizedMessageNotice :: Char -> [(Char, ByteString)]
-> unrecognizedMessageNotice tag = [ ('S', "ERROR"), ('C', "08P01"), ('M', "Unrecognized message received from server"), ('D', "Message tag: " <> fromString (show tag)) ]
-
-> corruptedMessageNotice :: Char -> [(Char, ByteString)]
-> corruptedMessageNotice tag = [ ('S', "ERROR"), ('C', "08P01"), ('M', "Corrupted message received from server"), ('D', "Message tag: " <> fromString (show tag)) ]
-
-> communicationErrorNotice :: [(Char, ByteString)]
-> communicationErrorNotice      = [ ('S', "FATAL"), ('C', "08006"), ('M', "Communication with server failed") ]
-
-> printNotice :: [(Char, ByteString)] -> IO ()
-> printNotice 
-
-> showNotice :: [(Char, ByteString)] -> String
-> showNotice params = severity <> ": " <> message
->  where
->   severity = fromMaybe "ERROR" . fmap fst . uncons . map snd . filter ((== 'S') . fst) params
->   message = fromMaybe "Notice message received from server"
-
-> {-
-
-> close :: Connection -> IO ()
-> close c = bracket (takeMVar (connectionStatusVar c)) (const $ putMVar (connectionStatusVar c) False) $ flip when $ do
->   killThread (connectionReceiverThreadId c)
->   sendMessage (connectionSocket c) terminateMessage
->   Socket.sClose (connectionSocket c)
-
-> connect :: SockAddr -> ByteString -> ByteString -> [(ByteString, ByteString)] -> IO Connection
-> connect address user password parameters = do
->   socket <- Socket.socket (family addr) Socket.Stream 0
->   connect socket address
->   setupSession socket user password parameters
->  where
->   family (SockAddrInet _ _)       = Socket.AF_INET
->   family (SockAddrInet6 _ _ _ _)  = Socket.AF_INET6
->   family (SockAddrUnix _)         = Socket.AF_UNIX
-
-> setupSession :: Socket -> ByteString -> IO Connection
-> setupSession socket password parameters = do
->   sendMessage socket (startupMessage parameters)
->   receiveBackendMessage $ authenticationResponseHandler {
->     onAuthenticationCleartextPassword = performCleartextPasswordAuthentication
->   }
->  where
-
->   authenticationResponseHandler = backendMessageHandler {
->     onAuthenticationOk        = configureSession,
->     onErrorResponse           = const abortSession,
->     onUnexpectedMessage       = const abortSession,
->     onCorruptedMessage        = abortSession
+> beginFrontendSession :: (Int32 -> IO Lazy.ByteString) -> (Lazy.ByteString -> IO ()) -> IO FrontendSession
+> beginFrontendSession readData writeData = do
+>   sendQueue <- newChan
+>   recvQueue <- newChan
+>   procQueue <- newChan
+>   sendThread <- forkIO $ forever $ readChan sendQueue >>= writeData . toLazyByteString . frontendMessage
+>   recvThread <- forkIO $ forever $ readBackendMessage readData >>= writeChan recvQueue
+>   procThread <- forkIO $ let getNextMessage h = readChan recvQueue >>= apply h
+>                              apply (Consume h) m = h m >>= getNextMessage
+>                              apply (Pass) m = readChan procQueue >>= flip apply m
+>                           in getNextMessage Pass
+>   return FrontendSession {
+>     frontendSendQueue  = sendQueue,
+>     frontendRecvQueue  = recvQueue,
+>     frontendProcQueue  = procQueue,
+>     frontendSendThread = sendThread,
+>     frontendRecvThread = recvThread
 >    }
-
->   performCleartextPasswordAuthentication = sendMessage socket (passwordMessage password) >> completeAuthentication
-
->   completeAuthentication = receiveBackendMessage authenticationResponseHandler
-
->   configureSession = receiveBackendMessage $ backendMessageHandler {
->     onBackendKeyData          = ...,
->     onParameterStatus         = ...,
->     onReadyForQuery           = commenceSession,
->     onErrorResponse           = ...,
->     onNoticeResponse          = ...,
->     onUnexpectedMessage       = const abortSession,
->     onCorruptedMessage        = abortSession
->    }
-
->   commenceSession = do
->     statusVar <- newMVar True
->     receiverThreadId <- forkIO $ forever $ receiveBackendMessage $ backendMessageHandler {
->       onNoticeResponse          = error "TODO: invoke user-supplied notice response handler",
->       onNotificationResponse    = error "TODO: invoke user-supplied notification response handler",
->       onParameterStatus         = error "TODO: invoke user-supplied parameter status handler",
->       onUnexpectedMessage       = const abortConnectedSession,
->       onCorruptedMessage        = abortConnectedSession
->      }
->     return Connection {
->       connectionSocket = socket,
->       connectionStatusVar = statusVar,
->       connectionReceiverThreadId = receiverThreadId,
->      }
-
->   abortConnectedSession = error "TODO: ..."
-
->   abortSession = error "TODO: ..."
-
-
-> data Notice = Notice {
->   noticeSeverity          :: ByteString,
->   noticeCode              :: ByteString,
->   noticeMessage           :: ByteString,
->   noticeDetail            :: Maybe ByteString,
->   noticeHint              :: Maybe ByteString,
->   noticePosition          :: Maybe Integer,
->   noticeInternalPosition  :: Maybe Integer,
->   noticeInternalQuery     :: Maybe 
->   noticeContext
->   noticeSchema
->   noticeTable
->   noticeColumn
->   noticeDataType
->   noticeConstraint
->   noticeFile
->   noticeLine
->   noticeRoutine
-> }
-
-> data ErrorSeverity = ERROR | FATAL | PANIC deriving (Eq, Ord, Show, Enum)
-
-> makeError :: [(Char, ByteString)] -> Error
-> makeError 
-
-> -}
