@@ -3,7 +3,8 @@
 *.hi
 *.swp
 *~
-
-.cabal-sandbox/
-cabal.sandbox.config
-dist
+/.cabal-sandbox/
+/cabal.sandbox.config
+/dist/
+/dist-newstyle/
+/.ghc.*

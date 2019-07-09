@@ -2,7 +2,7 @@
   PostgreSQL Wire Protocol
   ========================
 
-    Copyright © 2015 Patryk Zadarnowski «pat@jantar.org».
+    Copyright © 2015-2019 Patryk Zadarnowski «pat@jantar.org».
     All rights reserved.
 
   Redistribution and use in source and binary forms, with or without

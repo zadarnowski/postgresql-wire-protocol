@@ -12,7 +12,7 @@ It implements both the server and client endpoints of the protocol
 abstracted at a number of levels, from raw message exchange to
 transaction-oriented monadic interactions. It explicitly does NOT
 hide any details of PostgreSQL's data type encoding, which are left
-up to higher libraries implemented on top of `postgresql-wire`.
+up to higher libraries implemented on top of `postgresql-wire-protocol`.
 
 By interacting with the PostgreSQL server at this level, we hope to
 avoid a number of limitations of PostgreSQL's official `libpq` library,

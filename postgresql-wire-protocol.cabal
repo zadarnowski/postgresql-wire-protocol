@@ -20,7 +20,7 @@ description:
     abstracted at a number of levels, from raw message exchange to
     transaction-oriented monadic interactions. It explicitly does NOT
     hide any details of PostgreSQL's data type encoding, which are left
-    up to higher libraries implemented on top of `postgresql-wire`.
+    up to higher libraries implemented on top of @postgresql-wire-protocol@.
 
     By interacting with the PostgreSQL server at this level, we hope to
     avoid a number of limitations of PostgreSQL's official `libpq` library,
@@ -55,12 +55,14 @@ library
     Database.PostgreSQL.Protocol.ObjectIDs
     Database.PostgreSQL.Protocol.Readers
     Database.PostgreSQL.Protocol.Types
+    Database.PostgreSQL.Protocol.Version
 
   other-modules:
     Database.PostgreSQL.Protocol.Internal.Builders
+    Database.PostgreSQL.Protocol.Internal.Parsers
 
   build-depends:
-    array                   >= 0.5.1.0,
-    base                    >= 4.8 && < 5,
-    bytestring              >= 0.10.6.0,
-    cereal                  >= 0.4.1.1
+    array       >= 0.5.3.0,
+    base        >= 4.9 && < 5,
+    bytestring  >= 0.10.8.2,
+    cereal      >= 0.5.8.1
