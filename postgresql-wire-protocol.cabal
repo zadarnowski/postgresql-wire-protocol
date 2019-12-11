@@ -1,5 +1,6 @@
+cabal-version:  2.2
 name:           postgresql-wire-protocol
-version:        0.1.0.0
+version:        0.2.0.0
 synopsis:       Fast pure Haskell implementation of the PostgreSQL wire protocol
 homepage:       https://github.com/zadarnowski/postgresql-wire-protocol
 category:       Database
@@ -8,33 +9,31 @@ stability:      alpha
 author:         Patryk Zadarnowski
 maintainer:     Patryk Zadarnowski <pat@jantar.org>
 
-copyright:      Copyright (c) 2015 Patryk Zadarnowski
+copyright:      Copyright (c) 2015-2019 Patryk Zadarnowski
 
 description:
 
-    This is a pure Haskell implementation of the PostgreSQL wire protocol
-    for low-level interaction between PostgreSQL client and server.
+    This is a pure Haskell implementation of the PostgreSQL wire protocol for
+    low-level interaction between PostgreSQL client and server.
 
     It implements both the server and client endpoints of the protocol
     (although the server endpoint is largely untested at this point in time),
     abstracted at a number of levels, from raw message exchange to
-    transaction-oriented monadic interactions. It explicitly does NOT
-    hide any details of PostgreSQL's data type encoding, which are left
-    up to higher libraries implemented on top of `postgresql-wire`.
+    transaction-oriented monadic interactions. It explicitly does NOT hide any
+    details of PostgreSQL's data type encoding, which are left up to higher
+    libraries implemented on top of `postgresql-wire-protocol`.
 
-    By interacting with the PostgreSQL server at this level, we hope to
-    avoid a number of limitations of PostgreSQL's official `libpq` library,
-    enabling use of Haskell's sophisticated concurrency platform for
-    pipelining of PostgreSQL messages, natural access from Haskell
-    to PostgreSQL asynchronous notifications, support for query
-    cancellation that actually works under the GHC virtual machine,
-    reduction to the amount of memory allocation and more efficient
-    use of mixed text and binary data exchange formats.
+    By interacting with the PostgreSQL server at this level, we hope to avoid a
+    number of limitations of PostgreSQL's official `libpq` library, enabling
+    use of Haskell's sophisticated concurrency platform for pipelining of
+    PostgreSQL messages, natural access from Haskell to PostgreSQL asynchronous
+    notifications, support for query cancellation that actually works under the
+    GHC virtual machine, reduction to the amount of memory allocation and more
+    efficient use of mixed text and binary data exchange formats.
 
-cabal-version:  >= 1.18
 build-type:     Simple
-license:        BSD3
-license-file:   LICENSE
+license:        BSD-3-Clause
+license-file:   LICENSE.md
 
 source-repository head
   type:         git
@@ -43,7 +42,7 @@ source-repository head
 source-repository this
   type:         git
   location:     https://github.com/zadarnowski/postgresql-wire-protocol.git
-  tag:          0.1.0.0
+  tag:          0.2.0.0
 
 library
   hs-source-dirs:   src
@@ -51,16 +50,12 @@ library
   ghc-options:      -O2 -Wall -fno-warn-unused-do-bind -fno-warn-missing-signatures
 
   exposed-modules:
-    Database.PostgreSQL.Protocol.Builders
     Database.PostgreSQL.Protocol.ObjectIDs
-    Database.PostgreSQL.Protocol.Readers
     Database.PostgreSQL.Protocol.Types
 
   other-modules:
-    Database.PostgreSQL.Protocol.Internal.Builders
 
   build-depends:
-    array                   >= 0.5.1.0,
-    base                    >= 4.8 && < 5,
-    bytestring              >= 0.10.6.0,
-    cereal                  >= 0.4.1.1
+    array      >= 0.5.4.0,
+    base       >= 4.8 && < 5,
+    bytestring >= 0.10.10.0
