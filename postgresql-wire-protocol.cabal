@@ -50,12 +50,16 @@ library
   ghc-options:      -O2 -Wall -fno-warn-unused-do-bind -fno-warn-missing-signatures
 
   exposed-modules:
+    Database.PostgreSQL.Protocol.Builders
     Database.PostgreSQL.Protocol.ObjectIDs
+    Database.PostgreSQL.Protocol.Readers
     Database.PostgreSQL.Protocol.Types
 
   other-modules:
+    Database.PostgreSQL.Protocol.Internal.Builders
 
   build-depends:
     array      >= 0.5.4.0,
     base       >= 4.8 && < 5,
-    bytestring >= 0.10.10.0
+    bytestring >= 0.10.10.0,
+    binary     >= 0.10.0.0

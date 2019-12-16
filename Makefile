@@ -1,6 +1,9 @@
 build:
 	@cabal new-build
 
+clean:
+	@rm -rf dist dist-newstyle
+
 doc:
 	@cabal new-haddock
 

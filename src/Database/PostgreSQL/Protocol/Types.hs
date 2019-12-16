@@ -42,7 +42,7 @@ import qualified Data.ByteString.Lazy as LazyByteString
 
 data SessionMessage =
 
-  -- | A message of the form “@STARTUP_MESSAGE m n ps@” requests initiation
+  -- | A message of the form “@'STARTUP_MESSAGE' m n ps@” requests initiation
   -- of a new database connection using protocol version @m.n@, optionally
   -- configuring some session parameters to the specified default values.
   -- Besides the usual set of server configuration parameters that can be
@@ -64,7 +64,7 @@ data SessionMessage =
   -- PostgreSQL does not maintain backward compatibility between releases of
   -- its protocol, and the current version (3.0) is the only version guaranteed
   -- to be supported by this library.
-  STARTUP_MESSAGE !Word16 !Word16 [(ByteString, ByteString)] |
+  STARTUP_MESSAGE !Word16 !Word16 [(ByteString, LazyByteString)] |
 
   -- | A message of the form “@CANCEL_REQUEST pid secret@” requests
   -- cancellation of a query currently being executed on the server by another
@@ -137,12 +137,12 @@ data SSLResponse =
 
 data FrontendMessage =
 
-  -- | A message of the form “@BIND p s pfs pvs rfs@” message requests
-  -- /binding/ (i.e., creation) of a new portal @p@ to an existing parsed
-  -- statement @s@, with parameter formats @pfs@, parameter values @pvs@ and
-  -- result formats @rfs@. The default /unnamed portal/ and/or /unnamed
-  -- statement/ can be selected by setting @p@ and/or @s@ to an empty byte
-  -- string ('ByteString.null').
+  -- | A message of the form “@BIND p s pfs pvs rfs@” requests /binding/
+  -- (i.e., creation) of a new portal @p@ to an existing parsed statement @s@,
+  -- with parameter formats @pfs@, parameter values @pvs@ and result formats
+  -- @rfs@. The default /unnamed portal/ and/or /unnamed statement/ can be
+  -- selected by setting @p@ and/or @s@ to an empty byte string
+  -- ('Data.ByteString.null').
   --
   -- The @pvs@ array must provide a field value (possibly 'Nothing' for SQL
   -- @NULL@) for every actual parameter mentioned in the SQL command @s@ using
@@ -162,7 +162,7 @@ data FrontendMessage =
   -- result values), specified as a singleton array (requesting the same
   -- encoding for all result fields), or else match the number of columns in
   -- the result set, thus specifying an individual format for each column.
-  BIND SessionObjectName SessionObjectName [Format] [Maybe ByteString] [Format] |
+  BIND SessionObjectName SessionObjectName [Format] [Maybe LazyByteString] [Format] |
 
   -- | A message of the form “@CLOSE k x@” requests that the session object @x@
   -- of type @k@ (either a 'STATEMENT_OBJECT' created by the 'PARSE' message or
@@ -191,7 +191,7 @@ data FrontendMessage =
   -- to indicate inability to supply the required @COPY@ data stream. The byte
   -- string @msg@ should provide a human-readable description of the exact
   -- error condition behind the failure.
-  COPY_FAIL ByteString |
+  COPY_FAIL LazyByteString |
 
   -- | A message of the form “@DESCRIBGE k x@” requests that the backend
   -- provide details about the session object @x@ of type @k@ (either a
@@ -222,7 +222,7 @@ data FrontendMessage =
   -- in the default text format, a singleton array to specify the same explicit
   -- transfer format for all arguments, or else it must specify precisely one
   -- format for each of the argument values in @avs@.
-  FUNCTION_CALL !ObjectID [Format] [Maybe ByteString] !Format |
+  FUNCTION_CALL !ObjectID [Format] [Maybe LazyByteString] !Format |
 
   -- | A message of the form “@PARSE s q pts@” requests creation of a new
   -- prepared statement object with the name @s@ in the current session from
@@ -237,7 +237,7 @@ data FrontendMessage =
   -- | Supplies a password string in response to an 'AuthenticationResponse'
   -- message from the backend, encrypted if required using the method requested
   -- by the backend.
-  PASSWORD_MESSAGE ByteString |
+  PASSWORD_MESSAGE LazyByteString |
 
   -- | A message of the form “@QUERY q@” requests a streamlined processing of
   -- the SQL command @q@, which should be parsed, bound, executed and
@@ -318,7 +318,7 @@ data BackendMessage =
   --     where @/n/@ is the number of rows copied, or “@COPY@”
   --     (without the row count) in version of the PostgreSQL
   --     server prior to 8.2.
-  COMMAND_COMPLETE ByteString |
+  COMMAND_COMPLETE LazyByteString |
 
   -- | Transmits a chunk of a @COPY@ data string from the backend to the
   -- frontend.  The actual format of the stream data is determined by the user
@@ -375,7 +375,7 @@ data BackendMessage =
 
   -- | Sent by the backend with a list of column or field values returned from
   -- a data set-returning SQL query such as @SELECT@ or @FETCH@.
-  DATA_ROW [Maybe ByteString] |
+  DATA_ROW [Maybe LazyByteString] |
 
   -- | Sent by the backend in lieu of the 'COMMAND_COMPLETE' message as a
   -- response to an attempt to execute an empty query string.
@@ -389,7 +389,7 @@ data BackendMessage =
   -- | Sent by the backend to indicate successful completion of a
   -- 'FUNCTION_CALL' operation, with the sole value returned by the function
   -- call (possibly @NULL@.)
-  FUNCTION_CALL_RESPONSE (Maybe ByteString) |
+  FUNCTION_CALL_RESPONSE (Maybe LazyByteString) |
 
   -- | Sent by the backend in lieu of the 'ROW_DESCRIPTION' message, in
   -- response to a 'DESCRIBE' message for a statement or portal which
@@ -488,7 +488,7 @@ data AuthenticationResponse =
   -- the supplied salt @s@, and @md5(x)@ is a function that returns a 32-byte
   -- byte string obtained from the lowercase hexadecimal encoding of the MD5
   -- signature of @x@.
-  Authentication_MD5_Password !Word32 |
+  AUTHENTICATION_MD5_PASSWORD !Word32 |
 
   -- | Issued by the backend to request SCM credential authentication, possible
   -- only on connections over local Unix-domain sockets on platforms that
@@ -526,7 +526,22 @@ data AuthenticationResponse =
   -- successful authentication or 'ERROR_RESPONSE' to indicate failure.
   AUTHENTICATION_GSS_CONTINUE LazyByteString |
 
-  -- | A message of the form “@AUTHENTICATION_MISCELLANEOUS t x@” is used to
+  -- | Issued by the backend to request SASL authentication, with the list
+  -- of one or more SASL authentication mechanisms, listed in the order of
+  -- server's preference.
+  AUTHENTICATION_SASL [ByteString] |
+
+  -- | Issued by the backend as a response to the previous step of SASL
+  -- authentication procedure, with SASL challenge data specific to the
+  -- SASL mechanism chosen by the frontend.
+  AUTHENTICATION_SASL_CONTINUE LazyByteString |
+
+  -- | Issued by the backend to indicate completion of a SASL authentication
+  -- procedure, with outcome data specific to the SASL mechanism chosen by the
+  -- frontend.
+  AUTHENTICATION_SASL_FINAL LazyByteString |
+
+  -- | A message of the form “@'AUTHENTICATION_MISCELLANEOUS' t x@” is used to
   -- encode possible future authentication methods that are not recognized by
   -- the current version of the library.  The 32-bit tag @t@ describes the
   -- authentication method requested and @x@ described any authentication
@@ -687,7 +702,7 @@ type NoticeFields = [NoticeField]
 -- one particular aspect of an error condition or notice message, as identified
 -- by the /tag/ @t@. The precise semantics of the associated field value @x@
 -- are described individually below for each known tag byte.
-type NoticeField = (NoticeFieldTag, ByteString)
+type NoticeField = (NoticeFieldTag, LazyByteString)
 
 -- | Tags describing semantics of individual fields within a notice or error
 -- response.
@@ -812,40 +827,3 @@ type ProcessID = Word32
 -- | A more explicit name for 'Data.ByteString.Lazy.ByteString'
 -- from "Data.ByteString.Lazy".
 type LazyByteString = LazyByteString.ByteString
-
-
-
-{-
-
-
-  Miscellaneous Types
-  ===================
-
--- | Type used to identify asynchronous notification channels bound by SQL @LISTEN@ command.
-type ChannelName = ByteString
-
--- | Type used to identify columns of a table by their numeric index, counting from @1@.
-type ColumnID = Int16
-
--- | Raw encoded table data exchanged by 'CopyInData' and 'CopyOutData' messages.
-type DataString = Lazy.ByteString
-
--- | Type used to identify result fields by their name.
-type FieldName = ByteString
-
--- | Type used to identify PostgreSQL database objects.
-type ObjectID = Word32
-
--- | Type used to identify PostgreSQL backend processes.
-type ProcessID = Word32
-
--- | Raw SQL query or command.
-type QueryString = Lazy.ByteString
-
--- | Session parameters are identified by strict byte strings.
-type ParameterName = ByteString
-
--- | NUL-terminated runtime parameter value, represented by a lazy byte string.
-type ValueString = Lazy.ByteString
-
--}
