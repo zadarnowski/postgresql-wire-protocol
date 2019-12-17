@@ -1,5 +1,5 @@
 -- | Module:    Database.PostgreSQL.Protocol.Internal.Builders
--- Description: Helper functions for message builders module
+-- Description: Helper functions for message serialisation
 -- Copyright:   © 2015-2019 Patryk Zadarnowski <pat@jantar.org>
 -- License:     BSD3
 -- Maintainer:  Patryk Zadarnowski «pat@jantar.org»
@@ -20,9 +20,19 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Builder
 import Data.Word
 
+import Database.PostgreSQL.Protocol.Tags
 import Database.PostgreSQL.Protocol.Types
 
 import qualified Data.ByteString.Lazy as LazyByteString
+
+-- | Converts a builder into a compact lazy byte string consisting of only a
+-- single chunk. This is intended to be used with parameterless messages, where
+-- the compacted the lazy byte string needs to be assembled only once, but for
+-- maximum benefit, the resulting function should be marked with the @NOINLINE@
+-- pragma.
+toCompactLazyByteString :: Builder -> LazyByteString
+toCompactLazyByteString =
+  LazyByteString.fromStrict . LazyByteString.toStrict . toLazyByteString
 
 -- | Adds a full PostgreSQL message header to the front of a message,
 -- consisting of the tag byte extracted from the least-significant 8 bits of
@@ -30,8 +40,8 @@ import qualified Data.ByteString.Lazy as LazyByteString
 -- depicting the message size in bytes, inclusive of the size header but
 -- excluding the tag byte. For maximum compatibility, messages larger than
 -- @2^31-1@ bytes will be rejected with an 'Overflow' exception.
-withMessageHeader :: Char -> Builder -> Builder
-withMessageHeader c = (char8 c <>) . withMessageSizeHeader
+withMessageHeader :: Word8 -> Builder -> Builder
+withMessageHeader tag = (word8 tag <>) . withMessageSizeHeader
 
 -- | Adds an untagged size header to the front of a message builder, consisting
 -- of the resulting message size in bytes, inclusive of the header itself,
@@ -46,7 +56,8 @@ withMessageSizeHeader b =
 -- header with the tag byte 'R', followed by a 32-bit big-endian integer
 -- depicting the type of authentication response being sent.
 withAuthenticationResponseHeader :: Word32 -> Builder -> Builder
-withAuthenticationResponseHeader k b = withMessageHeader 'R' (word32BE k <> b)
+withAuthenticationResponseHeader k b =
+  withMessageHeader AUTHENTICATION_RESPONSE (word32BE k <> b)
 
 -- | Constructs a builder for a NUL-terminated strict byte string, which is
 -- assumed to include no embedded NUL bytes, but not checked for these.
