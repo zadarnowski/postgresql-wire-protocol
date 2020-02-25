@@ -1,5 +1,5 @@
 -- | Module:    Database.PostgreSQL.Protocol.Encoders
--- Description: Builders for PostgreSQL messages.
+-- Description: Encoders for PostgreSQL messages.
 -- Copyright:   © 2015-2019 Patryk Zadarnowski <pat@jantar.org>
 -- License:     BSD3
 -- Maintainer:  Patryk Zadarnowski «pat@jantar.org»
@@ -23,6 +23,7 @@ import Data.Int
 import Data.Word
 
 import Database.PostgreSQL.Protocol.Internal.Builders
+import Database.PostgreSQL.Protocol.Internal.Utilities
 import Database.PostgreSQL.Protocol.Tags
 import Database.PostgreSQL.Protocol.Types
 
@@ -39,7 +40,7 @@ authenticationKerberosV5 :: LazyByteString
 authenticationKerberosV5 = toCompactLazyByteString $ withAuthenticationResponseHeader 2 mempty
 {-# NOINLINE authenticationKerberosV5 #-}
 
--- | Issued by the backend to request clear-text password authentication.  The
+-- | Issued by the backend to request clear-text password authentication. The
 -- frontend should respond with a 'PasswordMessage' containing an unencrypted
 -- text of the user's password.
 authenticationCleartextPassword :: LazyByteString
@@ -53,7 +54,7 @@ authenticationCleartextPassword = toCompactLazyByteString $ withAuthenticationRe
 -- login name @u@, password @p@ and the supplied salt @ss@ as follows:
 --
 -- @
---      "md5" <> md5 (md5 (/p/ <> /u/) <> /ss/
+--      "md5" <> md5 (md5 (/p/ <> /u/) <> /ss/)
 -- @
 --
 -- where /s/ is a 4-byte byte string obtained from the big-endian encoding of
@@ -70,7 +71,7 @@ authenticationMD5Password salt = toLazyByteString $ withAuthenticationResponseHe
 -- and then send a single data byte. The contents of the data byte are
 -- uninteresting; it's only used to ensure that the server waits long enough to
 -- receive the credential message. If the credential is acceptable, the server
--- responds with an 'AuthenticationOK', otherwise it responds with an
+-- responds with an 'AuthenticationOk', otherwise it responds with an
 -- 'ErrorResponse'. This message type is only issued by versions of PostgreSQL
 -- servers earlier than 9.1 and may eventually be removed from the protocol
 -- specification.
@@ -102,7 +103,7 @@ authenticationSSPI = toCompactLazyByteString $ withAuthenticationResponseHeader 
 -- this message indicates more data is needed to complete the authentication,
 -- the frontend must send that data as another 'PasswordMessage'.  If GSSAPI or
 -- SSPI authentication is completed by this message, the server will eventually
--- send 'AuthenticationOK' to indicate successful authentication or
+-- send 'AuthenticationOk' to indicate successful authentication or
 -- 'ErrorResponse' to indicate failure.
 authenticationGSSContinue :: LazyByteString -> LazyByteString
 authenticationGSSContinue content = toLazyByteString $ withAuthenticationResponseHeader 8 $
@@ -133,7 +134,7 @@ authenticationSASLFinal content = toLazyByteString $ withAuthenticationResponseH
 -- | A message of the form “@'BackendKeyData' pid k@” is sent by the backend as
 -- part of the session establishment protocol, providing the frontend process
 -- with the backend process ID @pid@ and secret @k@ required of the frontend to
--- issue query cancellation requests (see: 'CancelQuery' message.)
+-- issue query cancellation requests (see: 'CancelRequest' message.)
 backendKeyData :: ProcessID -> Word32 -> LazyByteString
 backendKeyData pid secret = toLazyByteString $ withMessageHeader BACKEND_KEY_DATA $
   word32BE pid <>
@@ -311,7 +312,7 @@ emptyQueryResponse = toCompactLazyByteString $ withMessageHeader EMPTY_QUERY_RES
 
 -- | Sent by the backend to indicate an error condition, with details of the
 -- error communicated through a list of tagged /notice fields/ as described in
--- the definition of the 'NOTICE_FIELD_TAG'.
+-- the definition of 'NoticeFieldTag'.
 errorResponse :: Foldable t => t NoticeField -> LazyByteString
 errorResponse nfs = toLazyByteString $ withMessageHeader ERROR_RESPONSE $
   foldMap (uncurry mappend . bimap word8 lazyByteStringNul) nfs <>
@@ -482,6 +483,14 @@ passwordMessage :: LazyByteString -> LazyByteString
 passwordMessage secret = toLazyByteString $ withMessageHeader PASSWORD_MESSAGE $
   lazyByteStringNul secret
 
+-- | Supplies a password string in response to an @'AuthenticationMD5Password' salt@
+-- message from the backend
+md5PasswordMessage :: Word32 -> ByteString -> ByteString -> LazyByteString
+md5PasswordMessage salt user secret =
+  passwordMessage ("md5" <>
+                   md5hex (md5hex (LazyByteString.fromChunks [secret, user]) <>
+                           toLazyByteString (word32BE salt)))
+
 -- | Sent by the backend after the maximum number of 'DataRow' messages
 -- requested by an 'Execute' operation has been reached without exhausting the
 -- entire result set.
@@ -551,13 +560,7 @@ sslRequestAccepted = "S"
 sslRequestRejected :: LazyByteString
 sslRequestRejected = "N"
 
--- | Prepares a startup message with the current version of the PostgreSQL
--- frontend/backend protocol; same as
--- @startupMessage' 'CURRENT_MAJOR_VERSION' 'CURRENT_MINOR_VERSION'@.
-startupMessage :: Foldable t => t ConnectionParameter -> LazyByteString
-startupMessage = startupMessage' CURRENT_MAJOR_VERSION CURRENT_MINOR_VERSION
-
--- | A message of the form “@'StartupMessage' m n ps@” requests initiation of
+-- | A message of the form “@'StartupMessage m n ps@” requests initiation of
 -- a new database connection using protocol version @m.n@, optionally
 -- configuring some session parameters to the specified default values. Besides
 -- the usual set of server configuration parameters that can be configured at
@@ -581,8 +584,8 @@ startupMessage = startupMessage' CURRENT_MAJOR_VERSION CURRENT_MINOR_VERSION
 -- (unless you /really/ know what you're doing!) For every day use
 -- 'startupMessage' (which requests current protocol version implicitly) should
 -- be always used in preference to @startupMessage'@.
-startupMessage' :: Foldable t => Word16 -> Word16 -> t ConnectionParameter -> LazyByteString
-startupMessage' m n ps = toLazyByteString $ withMessageSizeHeader $
+startupMessage :: Foldable t => Word16 -> Word16 -> t ConnectionParameter -> LazyByteString
+startupMessage m n ps = toLazyByteString $ withMessageSizeHeader $
   int32BE (fromIntegral m * 65536 + fromIntegral n) <>
   foldMap (uncurry mappend . bimap byteStringNul byteStringNul) ps <>
   char8 '\0'

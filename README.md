@@ -1,7 +1,7 @@
 PostgreSQL Wire Protocol
 ========================
 
-    Copyright © 2015-2019 Patryk Zadarnowski «pat@jantar.org».
+    Copyright © 2015-2020 Patryk Zadarnowski «pat@jantar.org».
     All rights reserved.
 
 This is a pure Haskell implementation of the PostgreSQL wire protocol for

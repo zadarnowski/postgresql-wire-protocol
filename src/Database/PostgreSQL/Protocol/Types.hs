@@ -20,12 +20,13 @@
 -- lists of quantities are represented by arrays (unboxed when possible) with
 -- 16-bit unsigned index types to reduce the amount of memory allocations.
 
-{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE DeriveDataTypeable, PatternSynonyms #-}
 {-# OPTIONS_GHC -funbox-strict-fields #-}
 
 module Database.PostgreSQL.Protocol.Types where
 
 import Data.ByteString (ByteString)
+import Data.Data
 import Data.Int
 import Data.Word
 
@@ -39,7 +40,6 @@ import qualified Data.ByteString.Lazy as LazyByteString
 -- messages use an encoding incompatible with all other message types, and must
 -- therefore only ever appear as the very first  message posted on a new socket
 -- connection to the backend.
-
 data SessionMessage =
 
   -- | A message of the form “@StartupMessage m n ps@” requests initiation
@@ -84,15 +84,15 @@ data SessionMessage =
   -- The server should respond with an 'GSSResponse' message described below.
   GSSENCRequest
 
-  deriving (Eq, Ord, Read, Show)
+  deriving (Data, Eq, Ord, Read, Show)
 
 -- | Current major version of the PostgreSQL wire protocol, to be used in
--- 'STARTUP_MESSAGE'.  Version number 1234 and higher are reserved for special
--- connection headers such as 'CANCEL_REQUEST' and 'SSL_REQUEST', so actual
--- major version numbers in 'STARTUP_MESSAGE' must be equal to 1233 or lower.
--- The current version 3.0 has been introduced in PostgreSQL 7.4 and is the
--- only version supported by this library. The previous version 2.0, introduced
--- in PostgreSQL 6.4, is incompatible with version 3.0, and I was unable to
+-- 'StartupMessage'.  Version number 1234 and higher are reserved for special
+-- connection headers such as 'CancelRequest' and 'SSLRequest', so actual major
+-- version numbers in 'StartupMessage' must be equal to 1233 or lower.  The
+-- current version 3.0 has been introduced in PostgreSQL 7.4 and is the only
+-- version supported by this library. The previous version 2.0, introduced in
+-- PostgreSQL 6.4, is incompatible with version 3.0, and I was unable to
 -- find documentation for the original version 1.0 of the protocol.
 pattern CURRENT_MAJOR_VERSION :: Word16
 pattern CURRENT_MAJOR_VERSION = 3
@@ -104,7 +104,6 @@ pattern CURRENT_MINOR_VERSION = 0
 
 -- | The type of a special-case response to an 'SSLRequest' message described
 -- above.
-
 data SSLResponse =
 
   -- | Indicates to the frontend that the backend has accepted the
@@ -122,16 +121,16 @@ data SSLResponse =
   SSLRequestRejected |
 
   -- | Indicates to the frontend that the backend does not understand
-  -- 'SSLReqeust' messages.  This would only occur if the server predates the
+  -- 'SSLRequest' messages.  This would only occur if the server predates the
   -- addition of SSL support to PostgreSQL.  Such servers are now very ancient,
   -- and likely do not exist in the wild any more. In this case the
   -- connection must be closed, but the frontend might choose to open another,
   -- fresh connection and proceed without requesting SSL. The notice returned
   -- by the backend is unlikely to continue meaningful error information and
   -- should most likely be ignored.
-  SSLRequestFailed NoticeFields
+  SSLErrorResponse NoticeFields
 
-  deriving (Eq, Ord, Read, Show)
+  deriving (Data, Eq, Ord, Read, Show)
 
 -- | The type of a special-case response to an 'GSSENCRequest' message described
 -- above.
@@ -152,22 +151,21 @@ data GSSResponse =
   GSSRequestRejected |
 
   -- | Indicates to the frontend that the backend does not understand
-  -- 'GSSENCReqeust' messages.  This would only occur if the server predates
+  -- 'GSSENCRequest' messages.  This would only occur if the server predates
   -- the addition of SSL support to PostgreSQL. In this case the connection
   -- must be closed, but the frontend might choose to open another, fresh
   -- connection and proceed without requesting SSL. The notice returned by the
   -- backend is unlikely to continue meaningful error information and should
   -- most likely be ignored.
-  GSSRequestFailed NoticeFields
+  GSSErrorResponse NoticeFields
 
-  deriving (Eq, Ord, Read, Show)
+  deriving (Data, Eq, Ord, Read, Show)
 
 -- | The type of messages sent by frontend to a PostgreSQL backend or server.
 -- These are the messages tagged with ‘@F@’ in Chapter 49 of PostgreSQL
 -- documentation, with exception of the 'StartupMessage', 'CancelRequest' and
 -- 'SSLRequest' message types that are defined separately as 'SessionMessage'
 -- values.
-
 data FrontendMessage =
 
   -- | A message of the form “@Bind p s pfs pvs rfs@” requests /binding/ (i.e.,
@@ -250,7 +248,7 @@ data FrontendMessage =
   -- of a PostgreSQL function with the given object ID @oid@, supplying it an
   -- array of argument values @avs@ encoded in the transfer format specified by
   -- the array @afs@, and expecting the function's sole result value to be
-  -- encoded using the transfer format @rf@. As for 'BIND' messages, @afs@ can
+  -- encoded using the transfer format @rf@. As for 'Bind' messages, @afs@ can
   -- be an empty array if all argument values are supplied in the default text
   -- format, a singleton array to specify the same explicit transfer format for
   -- all arguments, or else it must specify precisely one format for each of
@@ -268,7 +266,7 @@ data FrontendMessage =
   -- string @q@ itself.
   Parse SessionObjectName LazyByteString [ObjectID] |
 
-  -- | Supplies a password string in response to an 'AuthenticationResponse'
+  -- | Supplies a password string in response to an v'AuthenticationResponse'
   -- message from the backend, encrypted if required using the method requested
   -- by the backend.
   PasswordMessage LazyByteString |
@@ -293,19 +291,26 @@ data FrontendMessage =
   -- connection socket.
   Terminate
 
-  deriving (Eq, Ord, Read, Show)
+  deriving (Data, Eq, Ord, Read, Show)
 
 -- | The type of messages sent by backend to a PostgreSQL frontend or client.
 -- These are the messages tagged with ‘@B@’ in Chapter 49 of PostgreSQL
 -- documentation.
-
 data BackendMessage =
+
+  -- | One of the three asynchronous message types that may be sent by the
+  -- backend at any time irrespective of any requests issues by the frontend,
+  -- namely 'NoticeResponse', 'NotificationResponse' or 'ParameterStatus'. In
+  -- Chapter 49 of PostgreSQL manual, this is documented as an array of three
+  -- individual messages, but in the Haskell implementation we combine them
+  -- into a single v'AsynchronousMessage' constructor to simplify processing.
+  AsynchronousMessage AsynchronousMessage |
 
   -- | Sent by a backend in response to a 'StartupMessage' with details of any
   -- authentication requirements imposed on the frontend. In Chapter 49 of
   -- PostgreSQL manual, this is documented as an array of individual messages,
   -- but in the Haskell implementation we combine them into a single
-  -- 'AuthenticationResponse' constructor to simplify processing.
+  -- v'AuthenticationResponse' constructor to simplify processing.
   AuthenticationResponse AuthenticationResponse |
 
   -- | A message of the form “@BackendKeyData pid k@” is sent by the backend as
@@ -437,43 +442,10 @@ data BackendMessage =
   -- return a row set.
   NoData |
 
-  -- | Sent by the backend to inform the frontend of a condition such as a
-  -- warning or administrator action that may, or may be relevant to an
-  -- operation currently in progress and may be issued asynchronously to any
-  -- other message exchanges.  Frontends must be prepared to accept such
-  -- messages from the backend at any time after the initial 'StartupMessage'
-  -- of a communication session.
-  NoticeResponse NoticeFields |
-
-  -- | A message of the form “@NotificationResponse pid c x@” is sent by the
-  -- backend to inform the frontend of a @NOTIFY@ event issued by the backend
-  -- process @pid@, on the channel @c@ with a payload @x@. Frontends must be
-  -- prepared to accept such messages from the backend at any time after the
-  -- initial 'StartupMessage' of a communication session, irrespective of any
-  -- other message exchanges being conducted.
-  NotificationResponse !ProcessID ByteString LazyByteString |
-
   -- | Sent by the backend in response to a statement variant of a 'Describe'
   -- message, with object IDs of the types of all parameters required by the
   -- statement.
   ParameterDescription [ObjectID] |
-
-  -- | A message of the form “@ParameterStatus p x@” is sent by the backend
-  -- whenever of the “significant” session parameters is changed, either
-  -- explicitly by the user with the SQL @SET@ command, or as a result of
-  -- administrator action.  Frontends must be prepared to accept such
-  -- messages from the backend at any time after the initial 'StartupMessage'
-  -- of a communication session, irrespective of any other message exchanges
-  -- being conducted.
-  --
-  -- What constitutes a “significant” message is currently left unspecified in
-  -- PostgreSQL documentation, and may even become configurable in future
-  -- server versions. At present time, these messages are issued for changes of
-  -- the following parameters: @server_version@, @server_encoding@,
-  -- @client_encoding@, @application_name@, @is_superuser@,
-  -- @session_authorization@, @DateStyle@, @IntervalStyle@, @TimeZone@,
-  -- @integer_datetimes@ and @standard_conforming_strings@.
-  ParameterStatus ByteString LazyByteString |
 
   -- | Sent by the backend in response to a successful completion of a 'Parse'
   -- operation.
@@ -494,8 +466,46 @@ data BackendMessage =
   -- referring to an SQL command that returns a row set.
   RowDescription [FieldDescription]
 
-  deriving (Eq, Ord, Read, Show)
+  deriving (Data, Eq, Ord, Read, Show)
 
+-- | An asynchronous message that may be issued by the backend at any time,
+-- irrespective of any frontend request being handled.
+data AsynchronousMessage =
+
+  -- | Sent by the backend to inform the frontend of a condition such as a
+  -- warning or administrator action that may, or may be relevant to an
+  -- operation currently in progress and may be issued asynchronously to any
+  -- other message exchanges.  Frontends must be prepared to accept such
+  -- messages from the backend at any time after the initial 'StartupMessage'
+  -- of a communication session.
+  NoticeResponse NoticeFields |
+
+  -- | A message of the form “@NotificationResponse pid c x@” is sent by the
+  -- backend to inform the frontend of a @NOTIFY@ event issued by the backend
+  -- process @pid@, on the channel @c@ with a payload @x@. Frontends must be
+  -- prepared to accept such messages from the backend at any time after the
+  -- initial 'StartupMessage' of a communication session, irrespective of any
+  -- other message exchanges being conducted.
+  NotificationResponse !ProcessID ByteString LazyByteString |
+
+  -- | A message of the form “@ParameterStatus p x@” is sent by the backend
+  -- whenever of the “significant” session parameters is changed, either
+  -- explicitly by the user with the SQL @SET@ command, or as a result of
+  -- administrator action.  Frontends must be prepared to accept such
+  -- messages from the backend at any time after the initial 'StartupMessage'
+  -- of a communication session, irrespective of any other message exchanges
+  -- being conducted.
+  --
+  -- What constitutes a “significant” message is currently left unspecified in
+  -- PostgreSQL documentation, and may even become configurable in future
+  -- server versions. At present time, these messages are issued for changes of
+  -- the following parameters: @server_version@, @server_encoding@,
+  -- @client_encoding@, @application_name@, @is_superuser@,
+  -- @session_authorization@, @DateStyle@, @IntervalStyle@, @TimeZone@,
+  -- @integer_datetimes@ and @standard_conforming_strings@.
+  ParameterStatus ByteString LazyByteString
+
+  deriving (Data, Eq, Ord, Read, Show)
 
 -- | Details of a backend response to a frontend's authentication request
 -- depicted by a session's 'StartupMessage'.
@@ -592,8 +602,22 @@ data AuthenticationResponse =
   -- user.
   AuthenticationOther !Word32 LazyByteString
 
-  deriving (Eq, Ord, Read, Show)
+  deriving (Data, Eq, Ord, Read, Show)
 
+-- | Numeric authentication response tag
+authenticationResponseTag :: AuthenticationResponse -> Word32
+authenticationResponseTag (AuthenticationOk) = 0
+authenticationResponseTag (AuthenticationKerberosV5) = 2
+authenticationResponseTag (AuthenticationCleartextPassword) = 3
+authenticationResponseTag (AuthenticationMD5Password _) = 5
+authenticationResponseTag (AuthenticationSCMCredential) = 6
+authenticationResponseTag (AuthenticationGSS) = 7
+authenticationResponseTag (AuthenticationGSSContinue _) = 8
+authenticationResponseTag (AuthenticationSSPI) = 9
+authenticationResponseTag (AuthenticationSASL _) = 10
+authenticationResponseTag (AuthenticationSASLContinue _) = 11
+authenticationResponseTag (AuthenticationSASLFinal _) = 12
+authenticationResponseTag (AuthenticationOther t _) = t
 
 -- * Field Descriptions
 
@@ -620,7 +644,7 @@ data FieldDescription = FIELD_DESCRIPTION {
   -- returned from the statement variant of 'Describe', the format code is not
   -- yet known and will always be set to the default value of 'TEXT_FORMAT'.
   fieldFormat :: !Format
-} deriving (Eq, Ord, Read, Show)
+} deriving (Data, Eq, Ord, Read, Show)
 
 
 -- * Session Objects
@@ -751,7 +775,7 @@ type NoticeFieldTag = Word8
 
 -- | (‘@S@’) Indicates that the field describes severity of the condition.  The
 -- field itself must be set to one of @ERROR@, @FATAL@ or @PANIC@ for
--- 'ERROR_RESPONSE' messages, or @WARNING@, @NOTICE@, @DEBUG@, @INFO@, or @LOG@
+-- 'ErrorResponse' messages, or @WARNING@, @NOTICE@, @DEBUG@, @INFO@, or @LOG@
 -- in a notice message.  It may also be set to localized translation of one of
 -- these.  This field must always be present in every notice and error message.
 pattern NOTICE_SEVERITY :: NoticeFieldTag
@@ -765,7 +789,7 @@ pattern NOTICE_CODE = 0x43 -- 'C'
 
 -- | (‘@M@’) The primary human-readable error message. It should be an
 -- accurate but terse (typically one line) statement of the underlying
--- condtion. This field should be present in every notice and error message.
+-- condition. This field should be present in every notice and error message.
 pattern NOTICE_MESSAGE :: NoticeFieldTag
 pattern NOTICE_MESSAGE = 0x4D -- 'M'
 

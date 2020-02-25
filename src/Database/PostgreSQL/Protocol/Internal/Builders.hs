@@ -1,6 +1,6 @@
 -- | Module:    Database.PostgreSQL.Protocol.Internal.Builders
 -- Description: Helper functions for message serialisation
--- Copyright:   © 2015-2019 Patryk Zadarnowski <pat@jantar.org>
+-- Copyright:   © 2015-2020 Patryk Zadarnowski <pat@jantar.org>
 -- License:     BSD3
 -- Maintainer:  Patryk Zadarnowski «pat@jantar.org»
 -- Stability:   experimental
@@ -8,10 +8,10 @@
 --
 -- This module defines a number of private helper functions used to simplify
 -- implementation of builders for PostgreSQL protocol message types in
--- "Database.PostgreSQL.Protocol.Builders".  These helper functions, which are
+-- "Database.PostgreSQL.Protocol.Encoders". These helper functions, which are
 -- kept internal to the package, are distilled into a separate module in order
 -- to eliminate the need for tediously-long export list in
--- "Database.PostgreSQL.Protocol.Builders".
+-- "Database.PostgreSQL.Protocol.Encoders".
 
 module Database.PostgreSQL.Protocol.Internal.Builders where
 
@@ -53,8 +53,9 @@ withMessageSizeHeader b =
  where s = toLazyByteString b
 
 -- | Adds an authentication response header, consisting of a normal message
--- header with the tag byte 'R', followed by a 32-bit big-endian integer
--- depicting the type of authentication response being sent.
+-- header with the tag byte @'AUTHENTICATION_RESPONSE'@, followed by a 32-bit
+-- big-endian integer depicting the type of authentication response being
+-- sent.
 withAuthenticationResponseHeader :: Word32 -> Builder -> Builder
 withAuthenticationResponseHeader k b =
   withMessageHeader AUTHENTICATION_RESPONSE (word32BE k <> b)

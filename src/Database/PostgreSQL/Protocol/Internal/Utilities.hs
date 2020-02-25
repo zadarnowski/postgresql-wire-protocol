@@ -1,6 +1,6 @@
 -- | Module:    Database.PostgreSQL.Protocol.Internal.Utilities
--- Description: Miscellaneous Functions
--- Copyright:   © 2015-2019 Patryk Zadarnowski <pat@jantar.org>
+-- Description: Miscellaneous functions
+-- Copyright:   © 2015-2020 Patryk Zadarnowski <pat@jantar.org>
 -- License:     BSD3
 -- Maintainer:  Patryk Zadarnowski «pat@jantar.org»
 -- Stability:   experimental

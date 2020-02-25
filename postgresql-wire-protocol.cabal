@@ -9,7 +9,7 @@ stability:      alpha
 author:         Patryk Zadarnowski
 maintainer:     Patryk Zadarnowski <pat@jantar.org>
 
-copyright:      Copyright (c) 2015-2019 Patryk Zadarnowski
+copyright:      Copyright (c) 2015-2020 Patryk Zadarnowski
 
 description:
 
@@ -50,20 +50,25 @@ library
   ghc-options:      -O2 -Wall -fno-warn-unused-do-bind -fno-warn-missing-signatures
 
   exposed-modules:
+    Database.PostgreSQL.Protocol.Decoders
     Database.PostgreSQL.Protocol.Encoders
-    --Database.PostresSQL.Protocol.Connection
+    Database.PostgreSQL.Protocol.Exception
+    Database.PostgreSQL.Protocol.Handle
     Database.PostgreSQL.Protocol.ObjectIDs
-    --Database.PostgreSQL.Protocol.Readers
+    Database.PostgreSQL.Protocol.Session
     Database.PostgreSQL.Protocol.Tags
     Database.PostgreSQL.Protocol.Types
 
   other-modules:
     Database.PostgreSQL.Protocol.Internal.Builders
+    Database.PostgreSQL.Protocol.Internal.Checked
+    -- Database.PostgreSQL.Protocol.Internal.Chan
     Database.PostgreSQL.Protocol.Internal.Utilities
 
   build-depends:
     array           >= 0.5.4.0,
     base            >= 4.8 && < 5,
     bytestring      >= 0.10.10.0,
-    binary          >= 0.10.0.0,
-    cryptohash-md5  >= 0.11.100.1
+    binary          >= 0.8.8.0,
+    cryptohash-md5  >= 0.11.100.1,
+    utf8-string     >= 1.0.1.1
