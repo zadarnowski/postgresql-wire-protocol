@@ -27,6 +27,8 @@ import Database.PostgreSQL.Protocol.Internal.Utilities
 import Database.PostgreSQL.Protocol.Tags
 import Database.PostgreSQL.Protocol.Types
 
+import qualified Data.ByteString.Lazy as LazyByteString
+
 -- | Issued by the backend to signify successful authentication of the
 -- frontend's credentials.
 authenticationOk :: LazyByteString
@@ -485,8 +487,8 @@ passwordMessage secret = toLazyByteString $ withMessageHeader PASSWORD_MESSAGE $
 
 -- | Supplies a password string in response to an @'AuthenticationMD5Password' salt@
 -- message from the backend
-md5PasswordMessage :: Word32 -> ByteString -> ByteString -> LazyByteString
-md5PasswordMessage salt user secret =
+md5PasswordMessage ::ByteString -> ByteString -> Word32 -> LazyByteString
+md5PasswordMessage user secret salt =
   passwordMessage ("md5" <>
                    md5hex (md5hex (LazyByteString.fromChunks [secret, user]) <>
                            toLazyByteString (word32BE salt)))

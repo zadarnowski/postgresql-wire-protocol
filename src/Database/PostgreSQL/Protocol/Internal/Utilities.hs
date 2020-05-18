@@ -18,6 +18,7 @@ import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 
+-- | Prepares a hex string representing an MD5 hash of the supplied lazy byte string.
 md5hex :: LazyByteString -> LazyByteString
 md5hex = LazyByteString.pack . ByteString.foldr' toHex [] . MD5.hashlazy
  where

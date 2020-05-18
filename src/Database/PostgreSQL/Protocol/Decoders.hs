@@ -8,8 +8,19 @@
 --
 -- This module defines low-level readers for all defined PostgreSQL messages,
 -- abstracting over the actual source of data, which is represented simply by
--- a @read@ function that retrieves, within a 'MonadFail', a lazy byte string
--- of a fixed size.
+-- a user-supplied @read@ function that retrieves, within a 'MonadFail', a lazy
+-- byte string of a fixed size.
+--
+-- The @read@ function is always invoked with a strictly-positive integer, and
+-- is expected to return a lazy byte string of precisely that number of input
+-- bytes.  Any other result length will be interpreted as a message parse error
+-- handled with a call to the monad's 'fail' method.
+--
+-- In order to protect against denial of service attacks, the message parsers
+-- impose reasonable internal limits on the maximum size of messages they are
+-- willing to receive (as appropriate to the specific communication context),
+-- so that the @read@ functions should assume that the requested number of
+-- bytes is always reasonable and warranted.
 
 module Database.PostgreSQL.Protocol.Decoders (
   sessionMessage,
@@ -29,7 +40,21 @@ import Database.PostgreSQL.Protocol.Types
 
 import qualified Data.ByteString.Lazy as LazyByteString
 
-sessionMessage :: MonadFail m => (Int32 -> m LazyByteString) -> m SessionMessage
+-- | Reads and parsers a 'SessionMessage' from a monadic input stream.
+-- @sessionMessage r@ loads the message data using the supplied monadic method
+-- @r@, which it invokes (possibly repeatedly) with the number of input bytes
+-- required. The number is always a strictly-positive 32-bit integer. The
+-- input method is expected to return precisely the requested number of bytes
+-- as a lazy byte string, and any other result will be interpreted as an error.
+-- If the supplied message cannot be decoded for any reason, @sessionMessage@
+-- responds by invoking the monad's 'fail' method with a message which
+-- attempts to provide a human-readable description of the error condition,
+-- suitable for debugging purposes rather than end-user consumption.
+--
+-- In order to protect against denial of service attacks, the maximum size of a
+-- 'StartupMessage' accepted by this method is 10000 bytes, same as the limit
+-- imposed by the @libpq@ library.
+sessionMessage :: MonadFail m => (Int -> m LazyByteString) -> m SessionMessage
 sessionMessage readBytes = do
   (n, v) <- readBytes 8 >>= runGetM ((,) <$> getInt32be <*> getWord32be)
   case v of
@@ -39,12 +64,12 @@ sessionMessage readBytes = do
                    return SSLRequest
     80877104 -> do when (n /= 8) $ invalidMessageLength n "GSSENCRequest"
                    return GSSENCRequest
-    _        -> do when (n < 8) $ invalidMessageLength n "StartupMessage"
+    _        -> do when (n < 8 || n > 10000) $ invalidMessageLength n "StartupMessage"
                    let vm = fromIntegral (v `shiftR` 16)
                        vn = fromIntegral (v .&. 0xFFFF)
                    when (vm /= CURRENT_MAJOR_VERSION || vn /= CURRENT_MINOR_VERSION) $
                      fail ("invalid protocol version in StartupMessage: " <> show vm <> "." <> show vn)
-                   params <- readBytes (n - 8) >>= runGetM getRemainingLazyByteStrings
+                   params <- readBytes (fromIntegral n - 8) >>= runGetM getRemainingLazyByteStrings
                    StartupMessage vm vn <$> makeParameters params
 
  where
@@ -52,107 +77,133 @@ sessionMessage readBytes = do
   makeParameters [] = return []
   makeParameters _ = fail "missing session parameter list terminator"
 
-frontendMessage :: MonadFail m => (Int32 -> m LazyByteString) -> m FrontendMessage
+-- | Reads and parsers a 'FrontendMessage' from a monadic input stream.
+-- @frontendMessage r@ loads the message data using the supplied monadic method
+-- @r@, which it invokes (possibly repeatedly) with the number of input bytes
+-- required. The number is always a strictly-positive 32-bit integer. The
+-- input method is expected to return precisely the requested number of bytes
+-- as a lazy byte string, and any other result will be interpreted as an error.
+-- If the supplied message cannot be decoded for any reason, @frontendMessage@
+-- responds by invoking the monad's 'fail' method with a message which
+-- attempts to provide a human-readable description of the error condition,
+-- suitable for debugging purposes rather than end-user consumption.
+frontendMessage :: MonadFail m => (Int -> m LazyByteString) -> m FrontendMessage
 frontendMessage readBytes = do
   (t, n) <- readBytes 5 >>= runGetM ((,) <$> getChar8 <*> getInt32be)
   case t of
-    'B' -> readMessage n "Bind" readBytes $ Bind
+    'B' -> readSmallMessage n "Bind" readBytes $ Bind
              <$> getByteStringNul
              <*> getByteStringNul
              <*> getArray16be getWord16be
              <*> getArray16be getPgValue
              <*> getArray16be getWord16be
-    'C' -> readMessage n "Close" readBytes $ Close
+    'C' -> readSmallMessage n "Close" readBytes $ Close
              <$> getWord8
              <*> getRemainingByteStringNul
-    'd' -> readMessage n "CopyInData" readBytes $ CopyInData
+    'd' -> readLargeMessage n "CopyInData" readBytes $ CopyInData
              <$> getRemainingLazyByteString
     'c' -> readTrivialMessage n CopyInDone
-    'f' -> readMessage n "CopyFail" readBytes $ CopyFail
+    'f' -> readSmallMessage n "CopyFail" readBytes $ CopyFail
              <$> getRemainingLazyByteStringNul
-    'D' -> readMessage n "Describe" readBytes $ Describe
+    'D' -> readSmallMessage n "Describe" readBytes $ Describe
              <$> getWord8
              <*> getRemainingByteStringNul
-    'E' -> readMessage n "Execute" readBytes $ Execute
+    'E' -> readSmallMessage n "Execute" readBytes $ Execute
              <$> getByteStringNul
              <*> getInt32be
     'H' -> readTrivialMessage n Flush
-    'F' -> readMessage n "FunctionCall" readBytes $ FunctionCall
+    'F' -> readLargeMessage n "FunctionCall" readBytes $ FunctionCall
              <$> getWord32be
              <*> getArray16be getWord16be
              <*> getArray16be getPgValue
              <*> getWord16be
-    'P' -> readMessage n "Parse" readBytes $ Parse
+    'P' -> readLargeMessage n "Parse" readBytes $ Parse
              <$> getByteStringNul
              <*> getLazyByteStringNul
              <*> getArray16be getWord32be
-    'p' -> readMessage n "PasswordMessage" readBytes $ PasswordMessage
+    'p' -> readSmallMessage n "PasswordMessage" readBytes $ PasswordMessage
              <$> getRemainingLazyByteStringNul
-    'Q' -> readMessage n "Query" readBytes $ Query
+    'Q' -> readLargeMessage n "Query" readBytes $ Query
              <$> getRemainingLazyByteStringNul
     'S' -> readTrivialMessage n Sync
     'X' -> readTrivialMessage n Terminate
     _   -> fail ("unrecognized message received from database frontend: " <> show t)
 
-backendMessage :: MonadFail m => (Int32 -> m LazyByteString) -> m BackendMessage
+-- | Reads and parsers a 'BackendMessage' from a monadic input stream.
+-- @backendMessage r@ loads the message data using the supplied monadic method
+-- @r@, which it invokes (possibly repeatedly) with the number of input bytes
+-- required. The number is always a strictly-positive 32-bit integer. The
+-- input method is expected to return precisely the requested number of bytes
+-- as a lazy byte string, and any other result will be interpreted as an error.
+-- If the supplied message cannot be decoded for any reason, @backendMessage@
+-- responds by invoking the monad's 'fail' method with a message which
+-- attempts to provide a human-readable description of the error condition,
+-- suitable for debugging purposes rather than end-user consumption.
+backendMessage :: MonadFail m => (Int -> m LazyByteString) -> m BackendMessage
 backendMessage readBytes = do
   (t, n) <- readBytes 5 >>= runGetM ((,) <$> getChar8 <*> getInt32be)
   case t of
-    'R' -> readMessage n "AuthenticationResponse" readBytes $ AuthenticationResponse
+    'R' -> readSmallMessage n "AuthenticationResponse" readBytes $ AuthenticationResponse
              <$> getAuthenticationResponse
-    'K' -> readMessage n "BackendKeyData" readBytes $ BackendKeyData
+    'K' -> readSmallMessage n "BackendKeyData" readBytes $ BackendKeyData
              <$> getWord32be
              <*> getWord32be
     '2' -> readTrivialMessage n BindComplete
     '3' -> readTrivialMessage n CloseComplete
-    'C' -> readMessage n "CommandComplete" readBytes $ CommandComplete
+    'C' -> readSmallMessage n "CommandComplete" readBytes $ CommandComplete
              <$> getRemainingLazyByteString
-    'd' -> readMessage n "CopyOutData" readBytes $ CopyOutData
+    'd' -> readLargeMessage n "CopyOutData" readBytes $ CopyOutData
              <$> getRemainingLazyByteString
     'c' -> readTrivialMessage n CopyOutDone
-    'G' -> readMessage n "CopyInResponse" readBytes $ CopyInResponse
+    'G' -> readSmallMessage n "CopyInResponse" readBytes $ CopyInResponse
              <$> getWord8
              <*> getArray16be getWord16be
-    'H' -> readMessage n "CopyOutResponse" readBytes $ CopyOutResponse
+    'H' -> readSmallMessage n "CopyOutResponse" readBytes $ CopyOutResponse
              <$> getWord8
              <*> getArray16be getWord16be
-    'W' -> readMessage n "CopyBothResponse" readBytes $ CopyBothResponse
+    'W' -> readSmallMessage n "CopyBothResponse" readBytes $ CopyBothResponse
              <$> getWord8
              <*> getArray16be getWord16be
-    'D' -> readMessage n "DataRow" readBytes $ DataRow
+    'D' -> readLargeMessage n "DataRow" readBytes $ DataRow
              <$> getArray16be getPgValue
     'I' -> readTrivialMessage n EmptyQueryResponse
-    'E' -> readMessage n "ErrorResponse" readBytes $ ErrorResponse
+    'E' -> readSmallMessage n "ErrorResponse" readBytes $ ErrorResponse
              <$> getNoticeFields
-    'V' -> readMessage n "FunctionCallResponse" readBytes $ FunctionCallResponse
+    'V' -> readLargeMessage n "FunctionCallResponse" readBytes $ FunctionCallResponse
              <$> getPgValue
-    '?' -> readMessage n "NegotiateProtocolVersion" readBytes $ NegotiateProtocolVersion
+    '?' -> readSmallMessage n "NegotiateProtocolVersion" readBytes $ NegotiateProtocolVersion
              <$> getWord32be
              <*> getArray16be getByteStringNul
     'n' -> readTrivialMessage n NoData
-    'N' -> readMessage n "NoticeResponse" readBytes $ fmap AsynchronousMessage $ NoticeResponse
+    'N' -> readSmallMessage n "NoticeResponse" readBytes $ fmap AsynchronousMessage $ NoticeResponse
              <$> getNoticeFields
-    'A' -> readMessage n "NotificationResponse" readBytes $ fmap AsynchronousMessage $ NotificationResponse
+    'A' -> readLargeMessage n "NotificationResponse" readBytes $ fmap AsynchronousMessage $ NotificationResponse
              <$> getWord32be
              <*> getByteStringNul
              <*> getRemainingLazyByteStringNul
-    't' -> readMessage n "ParameterDescription" readBytes $ ParameterDescription
+    't' -> readSmallMessage n "ParameterDescription" readBytes $ ParameterDescription
              <$> getArray16be getWord32be
-    'S' -> readMessage n "ParameterStatus" readBytes $ fmap AsynchronousMessage $ ParameterStatus
+    'S' -> readSmallMessage n "ParameterStatus" readBytes $ fmap AsynchronousMessage $ ParameterStatus
              <$> getByteStringNul
              <*> getRemainingLazyByteStringNul
     '1' -> readTrivialMessage n ParseComplete
     's' -> readTrivialMessage n PortalSuspended
-    'Z' -> readMessage n "ReadyForQuery" readBytes $ ReadyForQuery
+    'Z' -> readSmallMessage n "ReadyForQuery" readBytes $ ReadyForQuery
              <$> getWord8
-    'T' -> readMessage n "RowDescription" readBytes $ RowDescription
+    'T' -> readSmallMessage n "RowDescription" readBytes $ RowDescription
              <$> getArray16be getFieldDescription
     _   -> fail ("unrecognized message received from database backend: " <> show t)
 
-readMessage :: MonadFail m => Int32 -> String -> (Int32 -> m LazyByteString) -> Get a -> m a
-readMessage n k readBytes g = do
-  when (n < 4) $ invalidMessageLength n k
-  readBytes n >>= runGetM g
+readMessage :: MonadFail m => Int32 -> Int32 -> String -> (Int -> m LazyByteString) -> Get a -> m a
+readMessage maxN n k readBytes g = do
+  when (n < 4 || n > maxN) $ invalidMessageLength n k
+  readBytes (fromIntegral n) >>= runGetM g
+
+readLargeMessage :: MonadFail m => Int32 -> String -> (Int -> m LazyByteString) -> Get a -> m a
+readLargeMessage = readMessage (64 * 1024 * 1024)
+
+readSmallMessage :: MonadFail m => Int32 -> String -> (Int -> m LazyByteString) -> Get a -> m a
+readSmallMessage = readMessage (1 * 1024 * 1024)
 
 readTrivialMessage :: (MonadFail m, Show a) => Int32 -> a -> m a
 readTrivialMessage n k = k <$ when (n /= 4) (invalidMessageLength n (show k))
@@ -170,7 +221,7 @@ getAuthenticationResponse :: Get AuthenticationResponse
 getAuthenticationResponse = do
   t <- getWord32be
   case t of
-    0  -> return AuthenticationOk 
+    0  -> return AuthenticationOk
     2  -> return AuthenticationKerberosV5
     3  -> return AuthenticationCleartextPassword
     5  -> AuthenticationMD5Password <$> getWord32be

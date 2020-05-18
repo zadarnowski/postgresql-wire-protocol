@@ -97,6 +97,10 @@ array16BE element xs =
   int16BE (fromIntegralCheckMaxBound (length xs)) <>
   foldMap element xs
 
+-- | Converts between 'Integral' types, raising an 'Overflow' exception if the
+-- result is larger than the 'maxBound' of the target type. It assumes that the
+-- target type has the smaller range than the source, so that 'maxBound' of the
+-- target type itself is representable in the source type.
 fromIntegralCheckMaxBound :: (Integral a, Integral b, Num b, Bounded b) => a -> b
 fromIntegralCheckMaxBound x
   | (x <= fromIntegral (maxBound `asTypeOf` y)) = y

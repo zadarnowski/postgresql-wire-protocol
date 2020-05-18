@@ -86,19 +86,19 @@ data SessionMessage =
 
   deriving (Data, Eq, Ord, Read, Show)
 
--- | Current major version of the PostgreSQL wire protocol, to be used in
--- 'StartupMessage'.  Version number 1234 and higher are reserved for special
--- connection headers such as 'CancelRequest' and 'SSLRequest', so actual major
--- version numbers in 'StartupMessage' must be equal to 1233 or lower.  The
--- current version 3.0 has been introduced in PostgreSQL 7.4 and is the only
--- version supported by this library. The previous version 2.0, introduced in
--- PostgreSQL 6.4, is incompatible with version 3.0, and I was unable to
--- find documentation for the original version 1.0 of the protocol.
+-- | Current major version of the PostgreSQL wire protocol, to be used
+-- in 'StartupMessage'.  Version number 1234 and higher are reserved for
+-- special connection headers such as 'CancelRequest' and 'SSLRequest', so
+-- actual major version numbers in 'StartupMessage' must be equal to 1233 or
+-- lower.  The current version 3.0 has been introduced in PostgreSQL 7.4 and is
+-- the only version supported by this library. The previous version 2.0,
+-- introduced in PostgreSQL 6.4, is incompatible with version 3.0, and I was
+-- unable to find documentation for the original version 1.0 of the protocol.
 pattern CURRENT_MAJOR_VERSION :: Word16
 pattern CURRENT_MAJOR_VERSION = 3
 
--- | Current minor version of the PostgreSQL wire protocol, set to 0 in all
--- versions of the PostgreSQL frontend/backend protocol released so far.
+-- | Current minor version of the PostgreSQL wire protocol, set to 0 in
+-- all versions of the PostgreSQL frontend/backend protocol released so far.
 pattern CURRENT_MINOR_VERSION :: Word16
 pattern CURRENT_MINOR_VERSION = 0
 

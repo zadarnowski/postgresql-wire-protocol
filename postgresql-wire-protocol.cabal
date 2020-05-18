@@ -50,19 +50,22 @@ library
   ghc-options:      -O2 -Wall -fno-warn-unused-do-bind -fno-warn-missing-signatures
 
   exposed-modules:
+    Database.PostgreSQL.Client
+    --Database.PostgreSQL.Tuple
+    --Database.PostgreSQL.Value
+    Database.PostgreSQL.Protocol.Connection
     Database.PostgreSQL.Protocol.Decoders
     Database.PostgreSQL.Protocol.Encoders
     Database.PostgreSQL.Protocol.Exception
     Database.PostgreSQL.Protocol.Handle
     Database.PostgreSQL.Protocol.ObjectIDs
-    Database.PostgreSQL.Protocol.Session
     Database.PostgreSQL.Protocol.Tags
     Database.PostgreSQL.Protocol.Types
 
   other-modules:
     Database.PostgreSQL.Protocol.Internal.Builders
     Database.PostgreSQL.Protocol.Internal.Checked
-    -- Database.PostgreSQL.Protocol.Internal.Chan
+    Database.PostgreSQL.Protocol.Internal.SendQueue
     Database.PostgreSQL.Protocol.Internal.Utilities
 
   build-depends:
