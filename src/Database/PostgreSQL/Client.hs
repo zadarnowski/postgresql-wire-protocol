@@ -1,12 +1,15 @@
--- | Module:    Database.PostgreSQL.Protocol.Client
+-- | Module:    Database.PostgreSQL.Client
 -- Description: Asynchronous database client
 -- Copyright:   © 2015-2020 Patryk Zadarnowski <pat@jantar.org>
 -- License:     BSD3
 -- Maintainer:  Patryk Zadarnowski «pat@jantar.org»
 -- Stability:   experimental
 -- Portability: portable
+-- Portability: portable
 --
--- ...
+-- This module defines a high-level synchronous implementation of a
+-- non-blocking, thread-safe PostgreSQL database client. Asynchronous
+-- access is expected to be simulated using Haskell lightweight threads.
 
 module Database.PostgreSQL.Client (
   Client
